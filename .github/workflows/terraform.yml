@@ -51,6 +51,8 @@ on:
         type: string
         default: 'central-infrastructure'
     secrets:
+      ACR_NAME:
+        required: false
       AZURE_TENANT_ID:
         required: true
       AZURE_SUBSCRIPTION_ID:
@@ -79,6 +81,7 @@ env:
   TF_STATE_STORAGE_ACCOUNT: ${{ secrets.TF_BACKEND_RESOURCE_NAME }}
   TF_STATE_CONTAINER: ${{ secrets.TF_BACKEND_CONTAINER }}
   TF_VAR_state_container_scope: ${{ secrets.TF_BACKEND_CONTAINER_SCOPE }}
+  TF_VAR_acr_name: ${{ secrets.ACR_NAME }}
   TF_ROOT: ${{ inputs.root }}
   TF_ENGINE: ${{ inputs.engine }}
   TF_BACKEND_FILE: ${{ inputs.backend-file }}
