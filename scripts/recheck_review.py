@@ -1,4 +1,4 @@
-"""Refresh the existing PR structure job after a review changes."""
+"""Refresh the configured original PR policy job after a review changes."""
 
 import json
 import os
@@ -29,12 +29,12 @@ def refresh(api, number, head, pause=time.sleep):
             result = api(f"actions/runs/{run['id']}/jobs?filter=latest&per_page=100")
             jobs = [job for job in result["jobs"] if job["name"] == job_name]
             if result["total_count"] > 100 or len(jobs) != 1:
-                raise RuntimeError("Expected exactly one structure job in the latest attempt")
+                raise RuntimeError(f"Expected exactly one {job_name} job in the latest attempt")
             current = api(f"pulls/{number}")
             if current["state"] != "open" or current["head"]["sha"] != head:
                 return "PR closed or superseded; no rerun needed"
             api(f"actions/jobs/{jobs[0]['id']}/rerun", method="POST")
-            return f"Requested structure rerun in original run {run['id']}"
+            return f"Requested {job_name} rerun in original run {run['id']}"
         pause(5)
     raise RuntimeError("PR validation did not finish within five minutes; rerun this review job")
 

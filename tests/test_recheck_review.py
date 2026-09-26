@@ -1,10 +1,16 @@
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from scripts.recheck_review import refresh
 
 
 class ReviewRerun(unittest.TestCase):
+    def test_configured_nested_job_is_selected(self):
+        self.jobs[0]['name'] = 'policy / check'
+        with patch.dict('os.environ', REVIEW_JOB='policy / check'):
+            refresh(self.api, 3, 'current')
+        self.assertEqual(len(self.posts()), 1)
+
     def setUp(self):
         self.pull = {"state": "open", "head": {"sha": "current"}}
         self.run = {
