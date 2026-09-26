@@ -3,12 +3,20 @@ on:
   workflow_call:
     inputs:
       image:
-        description: Full image name including registry, without a tag
+        description: Full image name, or repository path when using azure-oidc
         required: true
         type: string
       registry:
         type: string
         default: ghcr.io
+      authentication:
+        description: registry credentials or Azure OIDC
+        type: string
+        default: registry
+      environment:
+        description: Caller environment trusted by Azure federation
+        type: string
+        default: ''
       context:
         type: string
         default: '.'
@@ -30,6 +38,15 @@ on:
         type: boolean
         default: false
     secrets:
+      ACR_NAME:
+        description: Azure registry resource name; never a tracked caller input
+        required: false
+      AZURE_CLIENT_ID:
+        required: false
+      AZURE_TENANT_ID:
+        required: false
+      AZURE_SUBSCRIPTION_ID:
+        required: false
       REGISTRY_USERNAME:
         required: false
       REGISTRY_PASSWORD:
@@ -46,10 +63,12 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
     timeout-minutes: 30
     permissions:
       contents: read
       packages: write
+      id-token: write
     outputs:
       digest: ${{ steps.build.outputs.digest }}
     env:
@@ -68,7 +87,18 @@ jobs:
           DOCKERFILE: ${{ inputs.dockerfile }}
           TARGET: ${{ inputs.target }}
           PLATFORMS: ${{ inputs.platforms }}
+          AUTHENTICATION: ${{ inputs.authentication }}
+          ACR_NAME: ${{ secrets.ACR_NAME }}
         run: |
+          case "$AUTHENTICATION" in
+            azure-oidc)
+              test -n "$ACR_NAME"
+              REGISTRY="$ACR_NAME.azurecr.io"
+              IMAGE="$REGISTRY/$IMAGE"
+              ;;
+            registry) ;;
+            *) echo 'Unsupported authentication method'; exit 1 ;;
+          esac
           case "$IMAGE" in "$REGISTRY"/*) ;; *) echo 'Image must belong to the configured registry'; exit 1 ;; esac
           if [[ "$IMAGE" == *:* || "$IMAGE" == *@* || "$IMAGE" == *' '* ]]; then
             echo 'Supply an image name without a tag or digest'; exit 1
@@ -78,11 +108,23 @@ jobs:
             case "$GITHUB_EVENT_NAME" in push|workflow_dispatch) publish=true ;; esac
           fi
           echo "publish=$publish" >> "$GITHUB_OUTPUT"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
           scope=$(printf '%s\0' "$IMAGE" "$BUILD_CONTEXT" "$DOCKERFILE" "$TARGET" "$PLATFORMS" | sha256sum | cut -d ' ' -f 1)
           echo "cache-scope=$scope" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+      - uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6
+        if: steps.policy.outputs.publish == 'true' && inputs.authentication == 'azure-oidc'
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Authenticate Docker to the secret-selected Azure registry
+        if: steps.policy.outputs.publish == 'true' && inputs.authentication == 'azure-oidc'
+        env:
+          ACR_NAME: ${{ secrets.ACR_NAME }}
+        run: az acr login --name "$ACR_NAME" --output none
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
-        if: steps.policy.outputs.publish == 'true'
+        if: steps.policy.outputs.publish == 'true' && inputs.authentication == 'registry'
         with:
           registry: ${{ inputs.registry }}
           username: ${{ inputs.registry == 'ghcr.io' && github.actor || secrets.REGISTRY_USERNAME }}
@@ -97,6 +139,6 @@ jobs:
           build-args: ${{ inputs.build-args }}
           secrets: ${{ secrets.BUILD_SECRETS }}
           push: ${{ steps.policy.outputs.publish == 'true' }}
-          tags: ${{ inputs.image }}:sha-${{ github.sha }}
+          tags: ${{ steps.policy.outputs.image }}:sha-${{ github.sha }}
           cache-from: type=gha,scope=${{ steps.policy.outputs.cache-scope }}
           cache-to: type=gha,mode=max,scope=${{ steps.policy.outputs.cache-scope }}

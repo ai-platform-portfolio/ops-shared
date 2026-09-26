@@ -13,7 +13,7 @@ Status: local implementation under validation; live migration incomplete.
 | Main no-change behaviour | Actual migrated main plan with changes=false and apply skipped | Pending owner-approved merge and run |
 | Deployment approval/re-plan | Current environment checks; changed fingerprint prevents apply | Local tests; live application not authorized |
 | Policy adoption and review events | Owner current-head review reruns original nested job and dependent gate | Local approval tests; live owner review pending |
-| Container build/cache/publication | Build and second-run cache hit; approved registry push/digest | Fixture prepared; registry publication choice pending |
+| Container build/cache/publication | Build and second-run cache hit; approved registry push/digest | Owner selected existing ACR through organization secret ACR_NAME; OIDC caller preparation in progress |
 | Governance | New repo protected; owner-verified baseline; audit green | Exact rules prepared; activation awaiting approval |
 
 Do not mark this migration complete from YAML validation or mocked tests alone.

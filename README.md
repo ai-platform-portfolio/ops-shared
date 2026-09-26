@@ -122,7 +122,13 @@ publish. Publication is limited to default-branch push/manual events and tags
 the image `sha-COMMIT`; the workflow returns its digest.
 
 GHCR uses the scoped GitHub token. Other registries require `REGISTRY_USERNAME`
-and `REGISTRY_PASSWORD`. Use `BUILD_SECRETS` for newline-separated BuildKit
+and `REGISTRY_PASSWORD`, or Azure callers select `authentication: azure-oidc`.
+Azure callers pass `ACR_NAME`, `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and
+`AZURE_SUBSCRIPTION_ID` as secrets, grant `id-token: write`, and choose the caller
+environment trusted by their identity. With Azure authentication, `image` is only
+the image repository path; the registry hostname is derived from `ACR_NAME` at
+runtime. Keep the registry resource name out of tracked configuration.
+Use `BUILD_SECRETS` for newline-separated BuildKit
 secret entries; never put secrets in `build-args`. Build records are not uploaded.
 Cache scopes include image, context, Dockerfile, target and platforms, and GitHub
 adds branch isolation. A repeat run tests cache reuse. The bundled scratch image
