@@ -1,0 +1,57 @@
+name: Prepare infrastructure tooling
+description: Install the selected engine and expose immutable workflow helpers
+inputs:
+  engine:
+    description: terraform or tofu
+    required: true
+  version:
+    description: Exact engine version
+    required: true
+  root:
+    description: Root directory within the caller checkout
+    required: true
+  lock-file:
+    description: Optional replacement lock file relative to the caller checkout
+    default: ''
+outputs:
+  scripts:
+    description: Trusted helper directory
+    value: ${{ steps.paths.outputs.scripts }}
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        ENGINE: ${{ inputs.engine }}
+      run: |
+        case "$ENGINE" in terraform|tofu) ;; *) exit 1 ;; esac
+    - if: inputs.engine == 'terraform'
+      uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd
+      with:
+        terraform_version: ${{ inputs.version }}
+        terraform_wrapper: false
+    - if: inputs.engine == 'tofu'
+      uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4
+      with:
+        tofu_version: ${{ inputs.version }}
+        tofu_wrapper: false
+    - id: paths
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        TF_ROOT: ${{ inputs.root }}
+        LOCK_FILE: ${{ inputs.lock-file }}
+      run: |
+        SCRIPTS="$(cd "$ACTION_PATH/../../scripts" && pwd)"
+        echo "scripts=$SCRIPTS" >> "$GITHUB_OUTPUT"
+        export PYTHONPATH="$SCRIPTS"
+        python3 - <<'PY'
+        import os
+        import shutil
+        from pathlib import Path
+        from settings import relative_path
+        root = relative_path('TF_ROOT', 'ci')
+        if os.environ['LOCK_FILE']:
+            source = relative_path('LOCK_FILE', '')
+            shutil.copyfile(source, Path(root) / '.terraform.lock.hcl')
+        PY
