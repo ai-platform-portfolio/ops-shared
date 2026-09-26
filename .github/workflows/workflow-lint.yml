@@ -11,4 +11,4 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
-      - uses: ai-platform-portfolio/ops-shared/actions/workflow-lint@fdc19288e0885cb9b870bddb29a165d5a34951a9
+      - uses: ai-platform-portfolio/ops-shared/actions/workflow-lint@feac0efbe0f9910fb13e89c3da8698a92aa60423

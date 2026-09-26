@@ -21,7 +21,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: ai-platform-portfolio/ops-shared
-          ref: fdc19288e0885cb9b870bddb29a165d5a34951a9
+          ref: feac0efbe0f9910fb13e89c3da8698a92aa60423
           persist-credentials: false
       - env:
           GH_TOKEN: ${{ github.token }}

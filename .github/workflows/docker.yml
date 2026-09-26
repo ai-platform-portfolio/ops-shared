@@ -64,6 +64,10 @@ jobs:
           REGISTRY: ${{ inputs.registry }}
           REQUEST_PUBLICATION: ${{ inputs.publish }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          BUILD_CONTEXT: ${{ inputs.context }}
+          DOCKERFILE: ${{ inputs.dockerfile }}
+          TARGET: ${{ inputs.target }}
+          PLATFORMS: ${{ inputs.platforms }}
         run: |
           case "$IMAGE" in "$REGISTRY"/*) ;; *) echo 'Image must belong to the configured registry'; exit 1 ;; esac
           if [[ "$IMAGE" == *:* || "$IMAGE" == *@* || "$IMAGE" == *' '* ]]; then
@@ -74,6 +78,8 @@ jobs:
             case "$GITHUB_EVENT_NAME" in push|workflow_dispatch) publish=true ;; esac
           fi
           echo "publish=$publish" >> "$GITHUB_OUTPUT"
+          scope=$(printf '%s\0' "$IMAGE" "$BUILD_CONTEXT" "$DOCKERFILE" "$TARGET" "$PLATFORMS" | sha256sum | cut -d ' ' -f 1)
+          echo "cache-scope=$scope" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
         if: steps.policy.outputs.publish == 'true'
@@ -92,5 +98,5 @@ jobs:
           secrets: ${{ secrets.BUILD_SECRETS }}
           push: ${{ steps.policy.outputs.publish == 'true' }}
           tags: ${{ inputs.image }}:sha-${{ github.sha }}
-          cache-from: type=gha,scope=${{ inputs.image }}-${{ inputs.target }}-${{ inputs.platforms }}
-          cache-to: type=gha,mode=max,scope=${{ inputs.image }}-${{ inputs.target }}-${{ inputs.platforms }}
+          cache-from: type=gha,scope=${{ steps.policy.outputs.cache-scope }}
+          cache-to: type=gha,mode=max,scope=${{ steps.policy.outputs.cache-scope }}

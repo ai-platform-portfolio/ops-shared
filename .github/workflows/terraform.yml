@@ -134,7 +134,7 @@ jobs:
         with:
           persist-credentials: false
       - id: tooling
-        uses: ai-platform-portfolio/ops-shared/actions/terraform@fdc19288e0885cb9b870bddb29a165d5a34951a9
+        uses: ai-platform-portfolio/ops-shared/actions/terraform@feac0efbe0f9910fb13e89c3da8698a92aa60423
         with:
           engine: ${{ inputs.engine }}
           version: ${{ inputs.version }}
@@ -161,7 +161,7 @@ jobs:
         with:
           persist-credentials: false
       - id: tooling
-        uses: ai-platform-portfolio/ops-shared/actions/terraform@fdc19288e0885cb9b870bddb29a165d5a34951a9
+        uses: ai-platform-portfolio/ops-shared/actions/terraform@feac0efbe0f9910fb13e89c3da8698a92aa60423
         with:
           engine: ${{ inputs.engine }}
           version: ${{ inputs.version }}
@@ -189,7 +189,7 @@ jobs:
         with:
           persist-credentials: false
       - id: tooling
-        uses: ai-platform-portfolio/ops-shared/actions/terraform@fdc19288e0885cb9b870bddb29a165d5a34951a9
+        uses: ai-platform-portfolio/ops-shared/actions/terraform@feac0efbe0f9910fb13e89c3da8698a92aa60423
         with:
           engine: ${{ inputs.engine }}
           version: ${{ inputs.version }}
