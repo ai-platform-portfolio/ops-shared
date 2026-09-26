@@ -1,0 +1,96 @@
+name: Reusable container build
+on:
+  workflow_call:
+    inputs:
+      image:
+        description: Full image name including registry, without a tag
+        required: true
+        type: string
+      registry:
+        type: string
+        default: ghcr.io
+      context:
+        type: string
+        default: '.'
+      dockerfile:
+        type: string
+        default: Dockerfile
+      target:
+        type: string
+        default: ''
+      platforms:
+        type: string
+        default: linux/amd64
+      build-args:
+        description: Non-secret build arguments only
+        type: string
+        default: ''
+      publish:
+        description: Publish only on a push or manual run on the default branch
+        type: boolean
+        default: false
+    secrets:
+      REGISTRY_USERNAME:
+        required: false
+      REGISTRY_PASSWORD:
+        required: false
+      BUILD_SECRETS:
+        description: Newline-separated BuildKit secret id=value entries
+        required: false
+    outputs:
+      digest:
+        description: Built image digest
+        value: ${{ jobs.build.outputs.digest }}
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    env:
+      DOCKER_BUILD_RECORD_UPLOAD: 'false'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - id: policy
+        env:
+          IMAGE: ${{ inputs.image }}
+          REGISTRY: ${{ inputs.registry }}
+          REQUEST_PUBLICATION: ${{ inputs.publish }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          case "$IMAGE" in "$REGISTRY"/*) ;; *) echo 'Image must belong to the configured registry'; exit 1 ;; esac
+          if [[ "$IMAGE" == *:* || "$IMAGE" == *@* || "$IMAGE" == *' '* ]]; then
+            echo 'Supply an image name without a tag or digest'; exit 1
+          fi
+          publish=false
+          if [ "$REQUEST_PUBLICATION" = true ] && [ "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH" ]; then
+            case "$GITHUB_EVENT_NAME" in push|workflow_dispatch) publish=true ;; esac
+          fi
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        if: steps.policy.outputs.publish == 'true'
+        with:
+          registry: ${{ inputs.registry }}
+          username: ${{ inputs.registry == 'ghcr.io' && github.actor || secrets.REGISTRY_USERNAME }}
+          password: ${{ inputs.registry == 'ghcr.io' && github.token || secrets.REGISTRY_PASSWORD }}
+      - id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        with:
+          context: ${{ inputs.context }}
+          file: ${{ inputs.dockerfile }}
+          target: ${{ inputs.target }}
+          platforms: ${{ inputs.platforms }}
+          build-args: ${{ inputs.build-args }}
+          secrets: ${{ secrets.BUILD_SECRETS }}
+          push: ${{ steps.policy.outputs.publish == 'true' }}
+          tags: ${{ inputs.image }}:sha-${{ github.sha }}
+          cache-from: type=gha,scope=${{ inputs.image }}-${{ inputs.target }}-${{ inputs.platforms }}
+          cache-to: type=gha,mode=max,scope=${{ inputs.image }}-${{ inputs.target }}-${{ inputs.platforms }}

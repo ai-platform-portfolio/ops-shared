@@ -1,0 +1,39 @@
+name: Reusable engineering policy
+on:
+  workflow_call:
+    inputs:
+      policy-file:
+        description: Tracked policy path within the caller
+        type: string
+        default: engineering.yaml
+permissions:
+  contents: read
+  pull-requests: read
+jobs:
+  check:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - id: standards
+        uses: ai-platform-portfolio/engineering-standards@26d46dfc2aaa8acb1cb5dd575d32d2853c5d337a
+      - name: Enforce the trusted policy and current revision approval
+        env:
+          CHECKER: ${{ steps.standards.outputs.checker }}
+          TOOLS: ${{ steps.standards.outputs.tools }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          PR: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ github.token }}
+          POLICY_FILE: ${{ inputs.policy-file }}
+        run: '"$CHECKER" --base "$BASE" --github-pr "$PR" --policy-file "$POLICY_FILE" --tools "$TOOLS" --report reports/quality.json'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: quality-results
+          path: reports/quality.json
+          if-no-files-found: error

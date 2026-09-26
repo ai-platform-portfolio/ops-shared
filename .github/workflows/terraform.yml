@@ -1,0 +1,203 @@
+name: Reusable infrastructure
+on:
+  workflow_call:
+    inputs:
+      operation:
+        description: preview, plan-only or deploy
+        type: string
+        default: 'preview'
+      engine:
+        description: terraform or tofu
+        type: string
+        default: 'terraform'
+      version:
+        description: Exact engine version
+        type: string
+        default: '1.12.2'
+      root:
+        description: Infrastructure root relative to caller checkout
+        type: string
+        default: 'ci'
+      backend-file:
+        description: Backend configuration relative to root
+        type: string
+        default: 'backend.hcl'
+      vars-file:
+        description: Optional variables file relative to root
+        type: string
+        default: ''
+      lock-file:
+        description: Optional alternate lock file relative to checkout
+        type: string
+        default: ''
+      federation-file:
+        description: Federation contract relative to checkout
+        type: string
+        default: 'ci/github.auto.tfvars.json'
+      plan-environment:
+        description: Caller planning environment
+        type: string
+        default: 'central-plan'
+      apply-environment:
+        description: Caller protected apply environment
+        type: string
+        default: 'central-apply'
+      approver:
+        description: Required deployment reviewer
+        type: string
+        default: 'michaela-links'
+      state-lock:
+        description: Concurrency key for this state
+        type: string
+        default: 'central-infrastructure'
+    secrets:
+      AZURE_TENANT_ID:
+        required: true
+      AZURE_SUBSCRIPTION_ID:
+        required: true
+      AZURE_CLIENT_ID:
+        required: true
+      TF_BACKEND_RESOURCE_GROUP:
+        required: true
+      TF_BACKEND_RESOURCE_NAME:
+        required: true
+      TF_BACKEND_CONTAINER:
+        required: true
+      TF_BACKEND_CONTAINER_SCOPE:
+        required: false
+permissions:
+  contents: read
+env:
+  TF_IN_AUTOMATION: 'true'
+  ARM_USE_OIDC: 'true'
+  ARM_USE_AZUREAD: 'true'
+  ARM_USE_CLI: 'false'
+  ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+  TF_STATE_RESOURCE_GROUP: ${{ secrets.TF_BACKEND_RESOURCE_GROUP }}
+  TF_STATE_STORAGE_ACCOUNT: ${{ secrets.TF_BACKEND_RESOURCE_NAME }}
+  TF_STATE_CONTAINER: ${{ secrets.TF_BACKEND_CONTAINER }}
+  TF_VAR_state_container_scope: ${{ secrets.TF_BACKEND_CONTAINER_SCOPE }}
+  TF_ROOT: ${{ inputs.root }}
+  TF_ENGINE: ${{ inputs.engine }}
+  TF_BACKEND_FILE: ${{ inputs.backend-file }}
+  TF_VARS_FILE: ${{ inputs.vars-file }}
+  TF_FEDERATION_FILE: ${{ inputs.federation-file }}
+  TF_APPLY_ENVIRONMENT: ${{ inputs.apply-environment }}
+  TF_APPROVER: ${{ inputs.approver }}
+  GH_TOKEN: ${{ github.token }}
+jobs:
+  result:
+    needs: [contract, preview, plan, apply]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          OPERATION: ${{ inputs.operation }}
+          CONTRACT: ${{ needs.contract.result }}
+          PREVIEW: ${{ needs.preview.result }}
+          PLAN: ${{ needs.plan.result }}
+          CHANGES: ${{ needs.plan.outputs.changes }}
+          APPLY: ${{ needs.apply.result }}
+        run: |
+          test "$CONTRACT" = success
+          if [ "$OPERATION" = preview ]; then
+            test "$PREVIEW" = success
+          else
+            test "$PLAN" = success
+            if [ "$OPERATION" = deploy ] && [ "$CHANGES" = true ]; then
+              test "$APPLY" = success
+            else
+              test "$APPLY" = skipped
+            fi
+          fi
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          OPERATION: ${{ inputs.operation }}
+        run: |
+          case "$OPERATION" in preview|plan-only|deploy) ;; *) exit 1 ;; esac
+  preview:
+    needs: contract
+    if: inputs.operation == 'preview' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: ${{ inputs.plan-environment }}
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - id: tooling
+        uses: ai-platform-portfolio/ops-shared/actions/terraform@fdc19288e0885cb9b870bddb29a165d5a34951a9
+        with:
+          engine: ${{ inputs.engine }}
+          version: ${{ inputs.version }}
+          root: ${{ inputs.root }}
+          lock-file: ${{ inputs.lock-file }}
+      - name: Plan and update PR preview
+        env:
+          SCRIPTS: ${{ steps.tooling.outputs.scripts }}
+        run: python3 "$SCRIPTS/plan_preview.py"
+  plan:
+    needs: contract
+    if: inputs.operation != 'preview' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: ${{ inputs.plan-environment }}
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      fingerprint: ${{ steps.plan.outputs.fingerprint }}
+      changes: ${{ steps.plan.outputs.changes }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - id: tooling
+        uses: ai-platform-portfolio/ops-shared/actions/terraform@fdc19288e0885cb9b870bddb29a165d5a34951a9
+        with:
+          engine: ${{ inputs.engine }}
+          version: ${{ inputs.version }}
+          root: ${{ inputs.root }}
+          lock-file: ${{ inputs.lock-file }}
+      - id: plan
+        env:
+          SCRIPTS: ${{ steps.tooling.outputs.scripts }}
+          TF_PHASE: plan
+        run: python3 "$SCRIPTS/deploy.py"
+  apply:
+    needs: plan
+    if: inputs.operation == 'deploy' && needs.plan.outputs.changes == 'true'
+    concurrency:
+      group: ${{ inputs.state-lock }}
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: ${{ inputs.apply-environment }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - id: tooling
+        uses: ai-platform-portfolio/ops-shared/actions/terraform@fdc19288e0885cb9b870bddb29a165d5a34951a9
+        with:
+          engine: ${{ inputs.engine }}
+          version: ${{ inputs.version }}
+          root: ${{ inputs.root }}
+          lock-file: ${{ inputs.lock-file }}
+      - name: Re-plan and apply only the reviewed fingerprint
+        env:
+          SCRIPTS: ${{ steps.tooling.outputs.scripts }}
+          TF_PHASE: apply
+          EXPECTED_FINGERPRINT: ${{ needs.plan.outputs.fingerprint }}
+        run: python3 "$SCRIPTS/deploy.py"

@@ -1,0 +1,40 @@
+name: Shared workflow validation
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  lint:
+    uses: ./.github/workflows/workflow-lint.yml
+  helpers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - run: make test
+      - uses: ./actions/workflow-lint
+      - name: Prove the shell gate rejects malformed workflows
+        run: PATH="$RUNNER_TEMP:$PATH" bash tests/test_workflow_lint.sh
+  container:
+    uses: ./.github/workflows/docker.yml
+    permissions:
+      contents: read
+      packages: write
+    with:
+      image: ghcr.io/ai-platform-portfolio/ops-shared-validation
+      context: tests/fixtures/container
+      dockerfile: tests/fixtures/container/Dockerfile
+  quality:
+    if: always()
+    needs: [lint, helpers, container]
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          LINT: ${{ needs.lint.result }}
+          HELPERS: ${{ needs.helpers.result }}
+          CONTAINER: ${{ needs.container.result }}
+        run: test "$LINT" = success && test "$HELPERS" = success && test "$CONTAINER" = success

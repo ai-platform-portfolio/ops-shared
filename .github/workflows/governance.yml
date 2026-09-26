@@ -1,0 +1,25 @@
+name: Reusable portfolio governance
+on:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Test drift detection and API failure handling
+        run: python3 -m unittest discover -s tests -p 'test_governance.py' -v
+      - name: Verify visibility, merge controls and documentation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/audit_governance.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: governance-audit
+          path: reports/governance.json
+          if-no-files-found: error
