@@ -1,4 +1,4 @@
-"""Run an OpenTofu PR preview and update one redacted GitHub comment."""
+"""Run an infrastructure PR preview and update one redacted GitHub comment."""
 
 import json
 import os
@@ -124,7 +124,7 @@ def preview(saved):
             detail = ", ".join(codes) or f"exit {result.returncode}"
             return (
                 "failed",
-                f"OpenTofu {stage} failed ({detail}). No successful plan was produced.\nRaw diagnostics are withheld to avoid publishing credentials or resource identifiers.",
+                f"Infrastructure {stage} failed ({detail}). No successful plan was produced.\nRaw diagnostics are withheld to avoid publishing credentials or resource identifiers.",
             )
     output = subprocess.check_output(
         [*command(), "show", "-no-color", str(saved)], text=True
@@ -153,12 +153,12 @@ def main():
         except (OSError, subprocess.CalledProcessError, ValueError):
             status, text = (
                 "failed",
-                "OpenTofu preview could not complete. No successful plan was produced.",
+                "Infrastructure preview could not complete. No successful plan was produced.",
             )
         body = comment_body(pull["head"]["sha"], status, text)
         publish(pull["number"], pull["head"]["sha"], body)
         Path(os.environ["GITHUB_STEP_SUMMARY"]).write_text(body)
-        print(f"OpenTofu preview: {status}; result posted to PR #{pull['number']}.")
+        print(f"Infrastructure preview: {status}; result posted to PR #{pull['number']}.")
         return 0 if status == "ok" else 1
     finally:
         saved.unlink(missing_ok=True)
