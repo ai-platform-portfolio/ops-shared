@@ -15,10 +15,13 @@ Status: local implementation under validation; live migration incomplete.
 | Policy adoption and review events | Owner current-head review reruns original nested job and dependent gate | Local approval tests; live owner review pending |
 | Container build/cache/publication | Build and second-run cache hit; approved registry push/digest | Owner selected existing ACR through organization secret ACR_NAME; OIDC caller preparation in progress |
 | Governance | New repo protected; owner-verified baseline; audit green | Exact rules prepared; activation awaiting approval |
-| Registry ABAC migration | Declared scoped writer, permission-mode update, live push verification | Owner authorized scope; read-only plan has exactly two changes; apply approval pending |
+| Registry ABAC migration | Declared scoped writer, permission-mode update, live push verification | Owner authorized scope; local plan has exactly two changes; protected CI deployment pending publication, review and CI approval |
 
 Do not mark this migration complete from YAML validation or mocked tests alone.
 Never trigger an apply to obtain evidence without the owner's per-command approval.
+Deploy through protected CI. The local ABAC plan is inspection evidence only;
+the proposed local apply is withdrawn. Manual deployment requires a concrete
+CI-blocking dependency and an explicitly approved exception under the shared standards.
 Regular PRs remain regular while evidence and owner review are pending.
 
 Local shared-helper result: 19 tests pass. Actionlint 1.7.7 with ShellCheck 0.11.0
