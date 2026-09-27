@@ -75,22 +75,30 @@ class GitHub:
         )
         try:
             with urlopen(request, timeout=20) as response:
-                return json.load(response)
+                return None if response.status == 204 else json.load(response)
         except HTTPError as error:
             # Never log API bodies: they may include repository content or credentials.
             raise RuntimeError(f"GitHub request failed ({error.code})") from None
 
 
-def installation_client(app_id, installation_id, private_key):
+def installation_client(app_id, installation_id, private_key, repository=".github"):
     import jwt
 
     now = int(time.time())
     token = jwt.encode({"iat": now - 60, "exp": now + 300, "iss": app_id}, private_key, algorithm="RS256")
     installation = GitHub(token).request(
         f"app/installations/{installation_id}/access_tokens", "POST",
-        {"repositories": [".github"], "permissions": {"contents": "write"}},
+        {"repositories": [repository], "permissions": {"contents": "write"}},
     )
     return GitHub(installation["token"])
+
+
+def request_onboarding(organization, github):
+    if organization != "ai-platform-portfolio":
+        raise ValueError("Automatic federation onboarding is scoped to ai-platform-portfolio")
+    github.request(f"repos/{organization}/terraform-modules/dispatches", "POST", {
+        "event_type": "repository-onboarding",
+    })
 
 
 def public_repositories(organization, fetch):

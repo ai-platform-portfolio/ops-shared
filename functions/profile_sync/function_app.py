@@ -2,7 +2,7 @@ import os
 
 import azure.functions as func
 
-from sync import GitHub, accept_event, installation_client, reconcile
+from sync import GitHub, accept_event, installation_client, reconcile, request_onboarding
 
 app = func.FunctionApp()
 
@@ -29,15 +29,23 @@ def webhook(req: func.HttpRequest, work: func.Out[str]) -> func.HttpResponse:
         accepted = False
     if not accepted:
         return func.HttpResponse("Invalid webhook", status_code=403)
-    work.set("reconcile")
+    onboarding = os.environ.get("AUTO_ENROLL_REPOSITORIES", "false") == "true"
+    work.set("onboard" if onboarding and req.headers.get("X-GitHub-Event") == "repository" else "reconcile")
     return func.HttpResponse(status_code=202)
 
 
 @app.queue_trigger(arg_name="work", queue_name="profile-sync", connection="AzureWebJobsStorage")
 def sync_catalogue(work: func.QueueMessage):
+    private_key = secret("GITHUB_APP_PRIVATE_KEY_SECRET")
+    if work.get_body() == b"onboard" and os.environ.get("AUTO_ENROLL_REPOSITORIES", "false") == "true":
+        onboarding = installation_client(
+            os.environ["GITHUB_APP_ID"], os.environ["GITHUB_INSTALLATION_ID"],
+            private_key, repository="terraform-modules",
+        )
+        request_onboarding(os.environ["GITHUB_ORGANIZATION"], onboarding)
     github = installation_client(
         os.environ["GITHUB_APP_ID"], os.environ["GITHUB_INSTALLATION_ID"],
-        secret("GITHUB_APP_PRIVATE_KEY_SECRET"),
+        private_key,
     )
     # Anonymous reads cannot see private repositories, even if app scope changes.
     public = GitHub("")

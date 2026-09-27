@@ -5,12 +5,26 @@ import json
 from pathlib import Path
 import sys
 import unittest
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "functions/profile_sync"))
-from sync import START, END, accept_event, catalogue, public_repositories, reconcile, update_readme
+from sync import START, END, GitHub, accept_event, catalogue, public_repositories, reconcile, request_onboarding, update_readme
 
 
 class ProfileSyncTest(unittest.TestCase):
+    def test_onboarding_dispatch_contains_no_webhook_content_or_apply_request(self):
+        github = MagicMock()
+        request_onboarding("ai-platform-portfolio", github)
+        github.request.assert_called_once_with("repos/ai-platform-portfolio/terraform-modules/dispatches", "POST", {
+            "event_type": "repository-onboarding",
+        })
+        with self.assertRaises(ValueError):
+            request_onboarding("downstream", github)
+        response = MagicMock()
+        response.__enter__.return_value.status = 204
+        with patch("sync.urlopen", return_value=response):
+            self.assertIsNone(GitHub("fixture").request("repos/fixture/dispatches", "POST", {}))
+
     def test_only_signed_events_for_the_configured_installation_are_accepted(self):
         body = json.dumps({"organization": {"login": "portfolio"}, "installation": {"id": 1}}).encode()
         secret = "fixture-only-not-a-real-secret"
