@@ -1,0 +1,57 @@
+name: Central infrastructure
+on:
+  pull_request:
+  push:
+    branches: [main]
+    paths:
+      - 'ci/**'
+      - 'functions/**'
+      - 'scripts/**'
+      - 'actions/terraform/**'
+      - '.github/workflows/infrastructure.yml'
+      - '.github/workflows/terraform.yml'
+      - '.github/workflows/functions.yml'
+  repository_dispatch:
+    types: [repository-onboarding]
+permissions:
+  contents: read
+  id-token: write
+concurrency:
+  group: infrastructure-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  preview:
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
+    uses: ./.github/workflows/terraform.yml
+    with:
+      operation: preview
+      version: '1.12.3'
+      onboarding-file: ci/onboarding.json
+      approver: ai-platform-portfolio/platform
+    secrets: inherit
+  infrastructure-plan-required:
+    if: github.event_name == 'pull_request' && always()
+    needs: preview
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          RESULT: ${{ needs.preview.result }}
+        run: test "$RESULT" = success
+  infrastructure:
+    if: github.event_name != 'pull_request'
+    uses: ./.github/workflows/terraform.yml
+    with:
+      operation: ${{ github.event_name == 'repository_dispatch' && 'plan-only' || 'deploy' }}
+      version: '1.12.3'
+      onboarding-file: ci/onboarding.json
+      approver: ai-platform-portfolio/platform
+    secrets: inherit
+  function:
+    needs: infrastructure
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/functions.yml
+    secrets: inherit

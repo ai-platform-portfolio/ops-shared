@@ -11,8 +11,8 @@ from settings import command, plan_args
 
 class Contract(unittest.TestCase):
     def test_workload_root_and_vars_are_arguments_not_shell(self):
-        with patch.dict(os.environ, TF_ENGINE='terraform', TF_ROOT='infra/prod', TF_VARS_FILE='prod.tfvars'):
-            self.assertEqual(command(), ['terraform', '-chdir=infra/prod'])
+        with patch.dict(os.environ, TF_ROOT='infra/prod', TF_VARS_FILE='prod.tfvars'):
+            self.assertEqual(command(), ['tofu', '-chdir=infra/prod'])
             self.assertIn('-var-file=prod.tfvars', plan_args('/tmp/plan'))
         for root in ('../outside', '/tmp/outside', '-bad'):
             with patch.dict(os.environ, TF_ROOT=root), self.assertRaises(ValueError):
@@ -30,6 +30,22 @@ class Contract(unittest.TestCase):
         with self.assertRaises(ValueError):
             deploy.approval_controls(environment, {'branch_policies': [{'name': '*', 'type': 'branch'}]}, 'owner')
 
+    def test_approval_controls_accept_a_team_reviewer_by_org_and_slug(self):
+        team = {'type': 'Team', 'reviewer': {
+            'slug': 'platform', 'html_url': 'https://github.com/orgs/example/teams/platform'}}
+        environment = {'can_admins_bypass': False,
+                       'deployment_branch_policy': {'custom_branch_policies': True},
+                       'protection_rules': [{'type': 'required_reviewers', 'reviewers': [team]}]}
+        branches = {'branch_policies': [{'name': 'main', 'type': 'branch'}]}
+        deploy.approval_controls(environment, branches, 'example/platform')
+        for approver in ['platform', 'other/platform', 'example/other']:
+            with self.assertRaises(ValueError):
+                deploy.approval_controls(environment, branches, approver)
+        blank = {'type': 'Team', 'reviewer': {'slug': 'platform'}}
+        with self.assertRaises(ValueError):
+            deploy.approval_controls({**environment, 'protection_rules': [
+                {'type': 'required_reviewers', 'reviewers': [blank]}]}, branches, 'example/platform')
+
     def test_plan_outputs_distinguish_no_changes_resource_changes_and_outputs(self):
         for changes, outputs, expected in [([], {}, False),
                 ([{'change': {'actions': ['create']}}], {}, True),
@@ -41,12 +57,14 @@ class Contract(unittest.TestCase):
                        'RUNNER_TEMP': directory, 'GITHUB_OUTPUT': directory + '/output',
                        'GITHUB_STEP_SUMMARY': directory + '/summary'}
                 plan = {'resource_changes': changes, 'output_changes': outputs}
+                (Path(directory) / 'review.tfplan').write_text('planned')
                 with patch.dict(os.environ, env), patch('deploy.api'), patch('deploy.approval_controls'), \
                      patch('deploy.verify_federation'), patch('deploy.init_args', return_value=['init']), \
                      patch('deploy.run', side_effect=['', 'redacted plan', json.dumps(plan)]):
                     deploy.main()
                 self.assertIn(f'changes={str(expected).lower()}', Path(env['GITHUB_OUTPUT']).read_text())
-                self.assertFalse((Path(directory) / 'plan.tfplan').exists())
+                # Retained for upload; the workflow removes it after publishing.
+                self.assertTrue((Path(directory) / 'review.tfplan').exists())
 
     def test_non_main_deployment_fails_before_api_or_commands(self):
         with patch.dict(os.environ, TF_PHASE='apply', GITHUB_REF='refs/heads/feature'), \
@@ -54,20 +72,36 @@ class Contract(unittest.TestCase):
             deploy.main()
         api.assert_not_called()
 
-    def test_changed_plan_never_applies_and_removes_saved_plan(self):
+    def apply_env(self, directory):
+        return {'TF_PHASE': 'apply', 'GITHUB_REF': 'refs/heads/main',
+                'GITHUB_REPOSITORY': 'example/workload', 'GITHUB_SHA': 'abc',
+                'TF_APPLY_ENVIRONMENT': 'apply', 'TF_APPROVER': 'owner',
+                'RUNNER_TEMP': directory, 'GITHUB_STEP_SUMMARY': directory + '/summary'}
+
+    def test_apply_uses_the_reviewed_plan_and_never_replans(self):
         with tempfile.TemporaryDirectory() as directory:
-            saved = Path(directory) / 'apply.tfplan'
-            saved.write_text('sensitive saved plan')
-            env = {'TF_PHASE': 'apply', 'GITHUB_REF': 'refs/heads/main',
-                   'GITHUB_REPOSITORY': 'example/workload', 'GITHUB_SHA': 'abc',
-                   'TF_APPLY_ENVIRONMENT': 'apply', 'TF_APPROVER': 'owner',
-                   'RUNNER_TEMP': directory, 'GITHUB_STEP_SUMMARY': directory + '/summary',
-                   'EXPECTED_FINGERPRINT': 'different'}
-            with patch.dict(os.environ, env), patch('deploy.api', return_value={'sha': 'abc'}), \
+            saved = Path(directory) / 'review.tfplan'
+            saved.write_text('reviewed plan')
+            with patch.dict(os.environ, self.apply_env(directory)), \
+                 patch('deploy.api', return_value={'sha': 'abc'}), \
                  patch('deploy.approval_controls'), patch('deploy.verify_federation'), \
                  patch('deploy.init_args', return_value=['init']), \
-                 patch('deploy.run', side_effect=['', 'plan', '{}']) as run:
-                with self.assertRaisesRegex(ValueError, 'fresh approval'):
+                 patch('deploy.run', side_effect=['', '']) as run:
+                deploy.main()
+            commands = [call.args[0][0] for call in run.call_args_list]
+            self.assertEqual(commands, ['init', 'apply'])
+            self.assertIn(str(saved), run.call_args_list[-1].args[0])
+            self.assertFalse(saved.exists())
+
+    def test_a_rejected_stale_plan_never_leaves_the_plan_behind(self):
+        with tempfile.TemporaryDirectory() as directory:
+            saved = Path(directory) / 'review.tfplan'
+            saved.write_text('stale plan')
+            with patch.dict(os.environ, self.apply_env(directory)), \
+                 patch('deploy.api', return_value={'sha': 'abc'}), \
+                 patch('deploy.approval_controls'), patch('deploy.verify_federation'), \
+                 patch('deploy.init_args', return_value=['init']), \
+                 patch('deploy.run', side_effect=['', RuntimeError('saved plan is stale')]):
+                with self.assertRaises(RuntimeError):
                     deploy.main()
-                self.assertFalse(any(call.args[0][0] == 'apply' for call in run.call_args_list))
             self.assertFalse(saved.exists())

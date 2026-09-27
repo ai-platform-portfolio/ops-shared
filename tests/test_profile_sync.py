@@ -15,7 +15,7 @@ class ProfileSyncTest(unittest.TestCase):
     def test_onboarding_dispatch_contains_no_webhook_content_or_apply_request(self):
         github = MagicMock()
         request_onboarding("ai-platform-portfolio", github)
-        github.request.assert_called_once_with("repos/ai-platform-portfolio/terraform-modules/dispatches", "POST", {
+        github.request.assert_called_once_with("repos/ai-platform-portfolio/ops-shared/dispatches", "POST", {
             "event_type": "repository-onboarding",
         })
         with self.assertRaises(ValueError):

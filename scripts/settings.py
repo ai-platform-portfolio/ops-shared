@@ -13,10 +13,7 @@ def relative_path(name, default):
 
 
 def command():
-    engine = os.environ.get("TF_ENGINE", "tofu")
-    if engine not in {"terraform", "tofu"}:
-        raise ValueError("TF_ENGINE must be terraform or tofu")
-    return [engine, "-chdir=" + relative_path("TF_ROOT", "ci")]
+    return ["tofu", "-chdir=" + relative_path("TF_ROOT", "ci")]
 
 
 def init_args():

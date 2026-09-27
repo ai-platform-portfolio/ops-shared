@@ -1,11 +1,13 @@
 name: Deploy central Function code
 on:
-  workflow_dispatch:
-    inputs:
-      application:
-        description: Key from functions/apps.json
+  workflow_call:
+    secrets:
+      AZURE_CLIENT_ID:
         required: true
-        default: profile
+      AZURE_TENANT_ID:
+        required: true
+      AZURE_SUBSCRIPTION_ID:
+        required: true
 permissions:
   contents: read
 jobs:
@@ -15,7 +17,7 @@ jobs:
     timeout-minutes: 20
     environment: central-apply
     concurrency:
-      group: central-function-${{ inputs.application }}
+      group: central-function-profile
       cancel-in-progress: false
     permissions:
       contents: read
@@ -31,7 +33,7 @@ jobs:
       - name: Read reviewed application source
         id: app
         env:
-          APPLICATION: ${{ inputs.application }}
+          APPLICATION: profile
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/function_source.py
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065

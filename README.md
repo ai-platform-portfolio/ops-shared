@@ -2,7 +2,8 @@
 
 Reusable GitHub Actions workflows for `ai-platform-portfolio`. Workload repositories
 own their infrastructure, state, policy and deployment environments. This repository
-owns shared workflow orchestration and its tests.
+owns shared workflow orchestration, its tests and the central org deployment root
+in [ci](ci/README.md). The module library remains in terraform-modules.
 
 Terraform helpers originate in `terraform-modules`; lint and review helpers
 originate in `engineering-standards`. Existing caller approval requirements remain
@@ -77,13 +78,17 @@ required caller input with no personal-account default. After approval,
 the workflow rejects superseded commits, re-plans and compares the entire plan
 apart from its timestamp. Changed plans require a fresh run and approval.
 `operation: plan-only` exercises the main planning path without enabling apply.
-Manual dispatch in the module caller defaults to plan-only.
+The central caller runs automatically on main; authenticated repository events
+select plan-only and cannot publish Function code. No manual trigger is configured.
 
 Terraform defaults to 1.12.2; preview callers explicitly select OpenTofu 1.12.3.
 `root` and `federation-file` are relative to checkout; `backend-file` and optional
 `vars-file` are relative to the root. `lock-file` is an optional alternate lock
 file relative to checkout. Absolute paths and parent traversal are rejected. Configuration
 auto tfvars remain supported. There are no arbitrary pre-step shell inputs.
+`onboarding-file` explicitly opts into org-scoped discovery before every plan;
+it defaults to disabled for consumers. Central Function references use the
+optional `FUNCTION_STORAGE` and `FUNCTION_VAULT` Secrets.
 
 Callers provide `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `AZURE_CLIENT_ID`,
 `TF_BACKEND_RESOURCE_GROUP`, `TF_BACKEND_RESOURCE_NAME` and

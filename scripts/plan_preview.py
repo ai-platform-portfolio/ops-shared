@@ -6,7 +6,7 @@ import re
 import subprocess
 from pathlib import Path
 
-from federation_contract import verify
+from federation_contract import main as discover, verify
 from settings import command, init_args, plan_args
 
 MARKER = "<!-- central-infrastructure-plan -->"
@@ -48,7 +48,7 @@ def comment_body(head, status, text):
     if len(text) > 50000:
         text = text[:50000] + "\n[Plan truncated at the comment size limit.]"
     return (
-        f"{MARKER}\n### Infrastructure plan ({status})\n\n"
+        f"{MARKER}\n### OpenTofu plan ({status})\n\n"
         f"commit `{head}`\n\n<details><summary>Show plan</summary>\n\n"
         f"```hcl\n{text}\n```\n</details>\n"
     )
@@ -103,6 +103,7 @@ def preview(saved):
         )
 
     try:
+        discover()
         verify(repository)
     except (KeyError, ValueError, OSError, subprocess.CalledProcessError):
         return (

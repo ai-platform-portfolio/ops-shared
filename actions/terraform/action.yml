@@ -1,9 +1,6 @@
 name: Prepare infrastructure tooling
-description: Install the selected engine and expose immutable workflow helpers
+description: Install OpenTofu and expose immutable workflow helpers
 inputs:
-  engine:
-    description: terraform or tofu
-    required: true
   version:
     description: Exact engine version
     required: true
@@ -20,18 +17,7 @@ outputs:
 runs:
   using: composite
   steps:
-    - shell: bash
-      env:
-        ENGINE: ${{ inputs.engine }}
-      run: |
-        case "$ENGINE" in terraform|tofu) ;; *) exit 1 ;; esac
-    - if: inputs.engine == 'terraform'
-      uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd
-      with:
-        terraform_version: ${{ inputs.version }}
-        terraform_wrapper: false
-    - if: inputs.engine == 'tofu'
-      uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4
+    - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4
       with:
         tofu_version: ${{ inputs.version }}
         tofu_wrapper: false

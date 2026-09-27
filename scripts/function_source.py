@@ -1,13 +1,14 @@
 """Resolve a reviewed, immutable Function package without shell interpolation."""
 
 import json
-import base64
 import os
 from pathlib import Path, PurePosixPath
 import re
 
 from deploy import api, approval_controls
 from federation_contract import verify as verify_federation
+
+APPROVER = "ai-platform-portfolio/platform"
 
 
 def source(config, application):
@@ -28,9 +29,8 @@ if __name__ == "__main__":
     if repository != "ai-platform-portfolio/ops-shared" or os.environ["GITHUB_REF"] != "refs/heads/main":
         raise ValueError("Function deployment must run from ops-shared main")
     prefix = f"repos/{repository}/environments/central-apply"
-    approval_controls(api(prefix), api(prefix + "/deployment-branch-policies"), "michaelalinks")
-    contract = api("repos/ai-platform-portfolio/terraform-modules/contents/ci/github.auto.tfvars.json?ref=main")
-    repositories = json.loads(base64.b64decode(contract["content"]))["github_repositories"]
+    approval_controls(api(prefix), api(prefix + "/deployment-branch-policies"), APPROVER)
+    repositories = json.loads(Path("ci/github.auto.tfvars.json").read_text())["github_repositories"]
     os.environ["TF_PHASE"] = "apply"
     verify_federation(lambda name: api(f"repos/{name}"), repositories)
     config = json.loads(Path("functions/apps.json").read_text())

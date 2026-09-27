@@ -11,13 +11,18 @@ the current file SHA are mandatory; malformed files fail without writes.
 
 ## Code publication
 
-This repository owns `.github/workflows/functions.yml`. After infrastructure is
-applied from terraform-modules, manually dispatch it on main with `application=profile`.
+This repository owns infrastructure under `ci/` and Function code publication.
+Relevant main pushes start `.github/workflows/infrastructure.yml`: the shared Terraform
+pipeline must succeed before it calls `functions.yml` to deploy `profile`.
+Both apply and code publishing have approval gates; there is no manual trigger.
+Configure the protected environment before merging
+the deployment workflow: referencing a missing environment does not establish
+an approval requirement.
 The `central-apply` environment requires the owner and main-only deployment with
 administrator bypass disabled. The workflow checks those controls and its real
 OIDC claims against the central Terraform declaration, then authenticates to Azure.
-Only the existing three Azure identity Secrets are needed here; backend and vault
-resource references remain restricted to terraform-modules.
+Code publishing uses the three Azure identity Secrets. The infrastructure jobs
+also require the existing backend and Function storage/vault reference Secrets.
 
 The checked-out workflow SHA identifies the source. CI builds hash-locked Linux
 dependencies, runs the actual HTTP-handler tests, publishes ZIP to Flex Consumption
@@ -28,11 +33,11 @@ provide rollback. Each deployment requires the owner's immediate approval.
 
 `AUTO_ENROLL_REPOSITORIES` defaults to false. This org opts in: authenticated
 repository events enqueue onboarding, which uses a separate installation token
-restricted to terraform-modules to request a `repository-onboarding` plan. The
+restricted to ops-shared to request a `repository-onboarding` plan. The
 README writer still uses a token restricted to `.github`; no private event data
 is passed to CI. The app needs Contents write on those two repositories.
 
-`terraform-modules/ci/onboarding.json` separately enables public repository discovery
+`ci/onboarding.json` separately enables public repository discovery
 for this org. Every discovered repo gets a desired apply credential on the existing
 CI identity, irrespective of immediate Azure use. CI plans but does not apply for
 webhook dispatches. Review and approve the normal infrastructure deployment to
