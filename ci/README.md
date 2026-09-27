@@ -93,9 +93,6 @@ code publishing. Verify a real signed delivery, unsigned/tampered rejection,
 README update, duplicate safety and private-repository exclusion before closing AI-5.
 See [runtime configuration](../functions/profile_sync/README.md).
 
-The older network ownership migration is historical evidence under
-[migrations](migrations/VALIDATION.md); do not rerun it for this repository move.
-
 Configuration references: [pinned module sources](https://developer.hashicorp.com/terraform/language/modules/configuration),
 [backend initialization](https://developer.hashicorp.com/terraform/language/backend),
 [reusable workflows and secret boundaries](https://docs.github.com/en/actions/how-tos/reuse-automations/reuse-workflows).
