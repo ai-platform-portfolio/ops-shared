@@ -23,6 +23,7 @@ jobs:
         run: |
           python -m pip install --require-hashes -r functions/profile_sync/requirements.txt
           PYTHONPATH=functions/profile_sync python -c 'import function_app; assert len(function_app.app.get_functions()) == 3'
+          PYTHONPATH=functions/profile_sync python -m unittest discover -s functions/profile_sync/tests -v
       - uses: ./actions/workflow-lint
       - name: Prove the shell gate rejects malformed workflows
         run: PATH="$RUNNER_TEMP:$PATH" bash tests/test_workflow_lint.sh
