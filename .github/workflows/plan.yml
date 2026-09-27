@@ -1,0 +1,29 @@
+name: PR infrastructure plan
+on:
+  pull_request:
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write
+concurrency:
+  group: infrastructure-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  plan:
+    uses: ./.github/workflows/terraform.yml
+    with:
+      operation: preview
+      engine: tofu
+      version: '1.12.3'
+      lock-file: ci/opentofu.lock.hcl
+      onboarding-file: ci/onboarding.json
+      approver: michaelalinks
+    secrets: inherit
+  infrastructure-plan-required:
+    needs: plan
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          RESULT: ${{ needs.plan.result }}
+        run: test "$RESULT" = success

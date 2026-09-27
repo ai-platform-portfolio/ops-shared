@@ -1,6 +1,7 @@
 __pycache__/
 .venv/
 reports/
-.terraform/
+**/.terraform/
+.migration/
 *.tfstate*
 *.tfplan

@@ -1,0 +1,8 @@
+{
+  "azurerm_resource_group.shared_network": "module.network.azurerm_resource_group.this",
+  "azurerm_virtual_network.shared": "module.network.azurerm_virtual_network.this",
+  "azurerm_subnet.aca": "module.network.azurerm_subnet.this[\"aca\"]",
+  "azurerm_subnet.private_endpoints": "module.network.azurerm_subnet.this[\"private_endpoints\"]",
+  "azurerm_private_dns_zone.this": "module.network.azurerm_private_dns_zone.this",
+  "azurerm_private_dns_zone_virtual_network_link.this": "module.network.azurerm_private_dns_zone_virtual_network_link.this"
+}

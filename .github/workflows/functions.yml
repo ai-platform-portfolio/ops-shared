@@ -1,11 +1,13 @@
 name: Deploy central Function code
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'functions/**'
-      - 'scripts/**'
-      - '.github/workflows/functions.yml'
+  workflow_call:
+    secrets:
+      AZURE_CLIENT_ID:
+        required: true
+      AZURE_TENANT_ID:
+        required: true
+      AZURE_SUBSCRIPTION_ID:
+        required: true
 permissions:
   contents: read
 jobs:

@@ -96,7 +96,7 @@ def installation_client(app_id, installation_id, private_key, repository=".githu
 def request_onboarding(organization, github):
     if organization != "ai-platform-portfolio":
         raise ValueError("Automatic federation onboarding is scoped to ai-platform-portfolio")
-    github.request(f"repos/{organization}/terraform-modules/dispatches", "POST", {
+    github.request(f"repos/{organization}/ops-shared/dispatches", "POST", {
         "event_type": "repository-onboarding",
     })
 
