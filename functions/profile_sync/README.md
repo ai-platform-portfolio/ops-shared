@@ -12,7 +12,7 @@ the current file SHA are mandatory; malformed files fail without writes.
 ## Code publication
 
 This repository owns infrastructure under `ci/` and Function code publication.
-Relevant main pushes start `.github/workflows/deploy.yml`: the shared Terraform
+Relevant main pushes start `.github/workflows/infrastructure.yml`: the shared Terraform
 pipeline must succeed before it calls `functions.yml` to deploy `profile`.
 Both apply and code publishing have approval gates; there is no manual trigger.
 Configure the protected environment before merging
