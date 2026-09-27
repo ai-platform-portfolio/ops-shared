@@ -6,10 +6,6 @@ on:
         description: preview, plan-only or deploy
         type: string
         default: 'preview'
-      engine:
-        description: terraform or tofu
-        type: string
-        default: 'terraform'
       version:
         description: Exact engine version
         type: string
@@ -93,7 +89,6 @@ env:
   TF_VAR_function_storage: ${{ secrets.FUNCTION_STORAGE }}
   TF_VAR_function_vault: ${{ secrets.FUNCTION_VAULT }}
   TF_ROOT: ${{ inputs.root }}
-  TF_ENGINE: ${{ inputs.engine }}
   TF_BACKEND_FILE: ${{ inputs.backend-file }}
   TF_VARS_FILE: ${{ inputs.vars-file }}
   TF_FEDERATION_FILE: ${{ inputs.federation-file }}
@@ -150,7 +145,6 @@ jobs:
       - id: tooling
         uses: ai-platform-portfolio/ops-shared/actions/terraform@ba45762f47621fbb4825ffe1ab6bb44fb967f96d
         with:
-          engine: ${{ inputs.engine }}
           version: ${{ inputs.version }}
           root: ${{ inputs.root }}
           lock-file: ${{ inputs.lock-file }}
@@ -176,7 +170,6 @@ jobs:
       - id: tooling
         uses: ai-platform-portfolio/ops-shared/actions/terraform@ba45762f47621fbb4825ffe1ab6bb44fb967f96d
         with:
-          engine: ${{ inputs.engine }}
           version: ${{ inputs.version }}
           root: ${{ inputs.root }}
           lock-file: ${{ inputs.lock-file }}
@@ -215,7 +208,6 @@ jobs:
       - id: tooling
         uses: ai-platform-portfolio/ops-shared/actions/terraform@ba45762f47621fbb4825ffe1ab6bb44fb967f96d
         with:
-          engine: ${{ inputs.engine }}
           version: ${{ inputs.version }}
           root: ${{ inputs.root }}
           lock-file: ${{ inputs.lock-file }}

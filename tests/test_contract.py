@@ -11,8 +11,8 @@ from settings import command, plan_args
 
 class Contract(unittest.TestCase):
     def test_workload_root_and_vars_are_arguments_not_shell(self):
-        with patch.dict(os.environ, TF_ENGINE='terraform', TF_ROOT='infra/prod', TF_VARS_FILE='prod.tfvars'):
-            self.assertEqual(command(), ['terraform', '-chdir=infra/prod'])
+        with patch.dict(os.environ, TF_ROOT='infra/prod', TF_VARS_FILE='prod.tfvars'):
+            self.assertEqual(command(), ['tofu', '-chdir=infra/prod'])
             self.assertIn('-var-file=prod.tfvars', plan_args('/tmp/plan'))
         for root in ('../outside', '/tmp/outside', '-bad'):
             with patch.dict(os.environ, TF_ROOT=root), self.assertRaises(ValueError):

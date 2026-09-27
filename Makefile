@@ -4,10 +4,10 @@ test:
 
 .PHONY: infrastructure-check preflight
 infrastructure-check:
-	terraform -chdir=ci fmt -check -recursive
-	terraform -chdir=ci init -backend=false -input=false -lockfile=readonly
-	terraform -chdir=ci validate
-	terraform -chdir=ci test
+	tofu -chdir=ci fmt -check -recursive
+	tofu -chdir=ci init -backend=false -input=false -lockfile=readonly
+	tofu -chdir=ci validate
+	tofu -chdir=ci test
 
 preflight: test infrastructure-check
 	python3 scripts/plan_preflight.py

@@ -49,7 +49,7 @@ def comment_body(head, status, text):
     if len(text) > 50000:
         text = text[:50000] + "\n[Plan truncated at the comment size limit.]"
     return (
-        f"{MARKER}\n### {'OpenTofu' if os.environ.get('TF_ENGINE', 'tofu') == 'tofu' else 'Terraform'} plan ({status})\n\n"
+        f"{MARKER}\n### OpenTofu plan ({status})\n\n"
         f"commit `{head}`\n\n<details><summary>Show plan</summary>\n\n"
         f"```hcl\n{text}\n```\n</details>\n"
     )
