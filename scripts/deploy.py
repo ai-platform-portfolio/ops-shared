@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -17,12 +18,21 @@ def api(path):
     return json.loads(subprocess.check_output(['gh', 'api', path], text=True))
 
 
+def reviewer_identity(item):
+    """Users are named by login; teams carry a slug instead, scoped by their org."""
+    reviewer = item['reviewer']
+    if item.get('type') != 'Team':
+        return reviewer.get('login')
+    match = re.search(r'/orgs/([^/]+)/teams/([^/]+)', reviewer.get('html_url', ''))
+    return f'{match.group(1)}/{match.group(2)}' if match else None
+
+
 def approval_controls(environment, branches, owner):
     reviewers = [rule for rule in environment['protection_rules'] if rule['type'] == 'required_reviewers']
     policies = branches['branch_policies']
     if (environment.get('can_admins_bypass') is not False
             or len(reviewers) != 1
-            or [item['reviewer'].get('login') for item in reviewers[0]['reviewers']] != [owner]
+            or [reviewer_identity(item) for item in reviewers[0]['reviewers']] != [owner]
             or environment.get('deployment_branch_policy', {}).get('custom_branch_policies') is not True
             or len(policies) != 1
             or policies[0]['name'] != 'main'

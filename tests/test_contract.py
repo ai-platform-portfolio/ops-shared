@@ -30,6 +30,22 @@ class Contract(unittest.TestCase):
         with self.assertRaises(ValueError):
             deploy.approval_controls(environment, {'branch_policies': [{'name': '*', 'type': 'branch'}]}, 'owner')
 
+    def test_approval_controls_accept_a_team_reviewer_by_org_and_slug(self):
+        team = {'type': 'Team', 'reviewer': {
+            'slug': 'platform', 'html_url': 'https://github.com/orgs/example/teams/platform'}}
+        environment = {'can_admins_bypass': False,
+                       'deployment_branch_policy': {'custom_branch_policies': True},
+                       'protection_rules': [{'type': 'required_reviewers', 'reviewers': [team]}]}
+        branches = {'branch_policies': [{'name': 'main', 'type': 'branch'}]}
+        deploy.approval_controls(environment, branches, 'example/platform')
+        for approver in ['platform', 'other/platform', 'example/other']:
+            with self.assertRaises(ValueError):
+                deploy.approval_controls(environment, branches, approver)
+        blank = {'type': 'Team', 'reviewer': {'slug': 'platform'}}
+        with self.assertRaises(ValueError):
+            deploy.approval_controls({**environment, 'protection_rules': [
+                {'type': 'required_reviewers', 'reviewers': [blank]}]}, branches, 'example/platform')
+
     def test_plan_outputs_distinguish_no_changes_resource_changes_and_outputs(self):
         for changes, outputs, expected in [([], {}, False),
                 ([{'change': {'actions': ['create']}}], {}, True),
