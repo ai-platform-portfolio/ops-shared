@@ -8,6 +8,8 @@ import re
 from deploy import api, approval_controls
 from federation_contract import verify as verify_federation
 
+APPROVER = "ai-platform-portfolio/platform"
+
 
 def source(config, application):
     app = config["function_apps"][application]
@@ -27,7 +29,7 @@ if __name__ == "__main__":
     if repository != "ai-platform-portfolio/ops-shared" or os.environ["GITHUB_REF"] != "refs/heads/main":
         raise ValueError("Function deployment must run from ops-shared main")
     prefix = f"repos/{repository}/environments/central-apply"
-    approval_controls(api(prefix), api(prefix + "/deployment-branch-policies"), "michaelalinks")
+    approval_controls(api(prefix), api(prefix + "/deployment-branch-policies"), APPROVER)
     repositories = json.loads(Path("ci/github.auto.tfvars.json").read_text())["github_repositories"]
     os.environ["TF_PHASE"] = "apply"
     verify_federation(lambda name: api(f"repos/{name}"), repositories)

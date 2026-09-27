@@ -17,7 +17,7 @@ jobs:
       version: '1.12.3'
       lock-file: ci/opentofu.lock.hcl
       onboarding-file: ci/onboarding.json
-      approver: michaelalinks
+      approver: ai-platform-portfolio/platform
     secrets: inherit
   infrastructure-plan-required:
     needs: plan

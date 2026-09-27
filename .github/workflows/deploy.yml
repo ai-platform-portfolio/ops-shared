@@ -23,7 +23,7 @@ jobs:
       engine: terraform
       version: '1.12.2'
       onboarding-file: ci/onboarding.json
-      approver: michaelalinks
+      approver: ai-platform-portfolio/platform
     secrets: inherit
   function:
     needs: infrastructure

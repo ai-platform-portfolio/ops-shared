@@ -46,8 +46,8 @@ There is no state-copy, state-push, import or state-move step.
 1. Review the ops-shared migration and the companion module-library cleanup.
    Disable the old repository's deployment writers before switching trust.
 2. Configure ops-shared `central-plan` with no approval/delay/branch restrictions,
-   and `central-apply` with reviewer `michaelalinks`, main-only access and
-   administrator bypass disabled.
+   and `central-apply` with the `ai-platform-portfolio/platform` team as reviewer,
+   main-only access and administrator bypass disabled.
 3. Grant ops-shared the existing Azure identity, backend, Function storage and
    vault reference Secrets. Repoint the existing primary plan/apply federated
    credentials to the ops-shared subjects below through an explicitly approved
