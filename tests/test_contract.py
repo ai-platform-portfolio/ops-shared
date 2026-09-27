@@ -57,12 +57,14 @@ class Contract(unittest.TestCase):
                        'RUNNER_TEMP': directory, 'GITHUB_OUTPUT': directory + '/output',
                        'GITHUB_STEP_SUMMARY': directory + '/summary'}
                 plan = {'resource_changes': changes, 'output_changes': outputs}
+                (Path(directory) / 'review.tfplan').write_text('planned')
                 with patch.dict(os.environ, env), patch('deploy.api'), patch('deploy.approval_controls'), \
                      patch('deploy.verify_federation'), patch('deploy.init_args', return_value=['init']), \
                      patch('deploy.run', side_effect=['', 'redacted plan', json.dumps(plan)]):
                     deploy.main()
                 self.assertIn(f'changes={str(expected).lower()}', Path(env['GITHUB_OUTPUT']).read_text())
-                self.assertFalse((Path(directory) / 'plan.tfplan').exists())
+                # Retained for upload; the workflow removes it after publishing.
+                self.assertTrue((Path(directory) / 'review.tfplan').exists())
 
     def test_non_main_deployment_fails_before_api_or_commands(self):
         with patch.dict(os.environ, TF_PHASE='apply', GITHUB_REF='refs/heads/feature'), \
@@ -70,20 +72,36 @@ class Contract(unittest.TestCase):
             deploy.main()
         api.assert_not_called()
 
-    def test_changed_plan_never_applies_and_removes_saved_plan(self):
+    def apply_env(self, directory):
+        return {'TF_PHASE': 'apply', 'GITHUB_REF': 'refs/heads/main',
+                'GITHUB_REPOSITORY': 'example/workload', 'GITHUB_SHA': 'abc',
+                'TF_APPLY_ENVIRONMENT': 'apply', 'TF_APPROVER': 'owner',
+                'RUNNER_TEMP': directory, 'GITHUB_STEP_SUMMARY': directory + '/summary'}
+
+    def test_apply_uses_the_reviewed_plan_and_never_replans(self):
         with tempfile.TemporaryDirectory() as directory:
-            saved = Path(directory) / 'apply.tfplan'
-            saved.write_text('sensitive saved plan')
-            env = {'TF_PHASE': 'apply', 'GITHUB_REF': 'refs/heads/main',
-                   'GITHUB_REPOSITORY': 'example/workload', 'GITHUB_SHA': 'abc',
-                   'TF_APPLY_ENVIRONMENT': 'apply', 'TF_APPROVER': 'owner',
-                   'RUNNER_TEMP': directory, 'GITHUB_STEP_SUMMARY': directory + '/summary',
-                   'EXPECTED_FINGERPRINT': 'different'}
-            with patch.dict(os.environ, env), patch('deploy.api', return_value={'sha': 'abc'}), \
+            saved = Path(directory) / 'review.tfplan'
+            saved.write_text('reviewed plan')
+            with patch.dict(os.environ, self.apply_env(directory)), \
+                 patch('deploy.api', return_value={'sha': 'abc'}), \
                  patch('deploy.approval_controls'), patch('deploy.verify_federation'), \
                  patch('deploy.init_args', return_value=['init']), \
-                 patch('deploy.run', side_effect=['', 'plan', '{}']) as run:
-                with self.assertRaisesRegex(ValueError, 'fresh approval'):
+                 patch('deploy.run', side_effect=['', '']) as run:
+                deploy.main()
+            commands = [call.args[0][0] for call in run.call_args_list]
+            self.assertEqual(commands, ['init', 'apply'])
+            self.assertIn(str(saved), run.call_args_list[-1].args[0])
+            self.assertFalse(saved.exists())
+
+    def test_a_rejected_stale_plan_never_leaves_the_plan_behind(self):
+        with tempfile.TemporaryDirectory() as directory:
+            saved = Path(directory) / 'review.tfplan'
+            saved.write_text('stale plan')
+            with patch.dict(os.environ, self.apply_env(directory)), \
+                 patch('deploy.api', return_value={'sha': 'abc'}), \
+                 patch('deploy.approval_controls'), patch('deploy.verify_federation'), \
+                 patch('deploy.init_args', return_value=['init']), \
+                 patch('deploy.run', side_effect=['', RuntimeError('saved plan is stale')]):
+                with self.assertRaises(RuntimeError):
                     deploy.main()
-                self.assertFalse(any(call.args[0][0] == 'apply' for call in run.call_args_list))
             self.assertFalse(saved.exists())
