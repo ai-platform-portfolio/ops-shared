@@ -32,7 +32,8 @@ generic command runner. Review automation never checks out PR code with its
 
 ## Terraform caller
 
-Replace `FULL_COMMIT_SHA` with a reviewed 40-character ops-shared revision:
+Replace `FULL_COMMIT_SHA` with a reviewed 40-character ops-shared revision and
+`YOUR_REVIEWER_LOGIN` with the caller's required deployment reviewer:
 
 ```yaml
 name: Infrastructure preview
@@ -49,6 +50,7 @@ jobs:
     secrets: inherit
     with:
       operation: preview
+      approver: YOUR_REVIEWER_LOGIN
       engine: tofu
       version: 1.12.3
       root: ci
@@ -70,7 +72,8 @@ including fork PRs. Trusted same-repository branches are required for live plans
 `operation: deploy` is main-only. It plans in `plan-environment`, defaults to
 `central-plan`, and applies only when resource or output changes exist. The
 `apply-environment` defaults to `central-apply`; it must require the named
-`approver`, forbid administrator bypass and permit only main. After approval,
+`approver`, forbid administrator bypass and permit only main. The reviewer is a
+required caller input with no personal-account default. After approval,
 the workflow rejects superseded commits, re-plans and compares the entire plan
 apart from its timestamp. Changed plans require a fresh run and approval.
 `operation: plan-only` exercises the main planning path without enabling apply.

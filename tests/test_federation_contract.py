@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from federation_contract import validate_claims, validate_repository
 
@@ -44,3 +45,14 @@ class FederationContractTest(unittest.TestCase):
                 validate_repository(
                     dict(self.repo, plan_environment=value), self.actual
                 )
+
+    def test_apply_only_repository_and_token(self):
+        repo = dict(self.repo)
+        del repo["plan_environment"]
+        validate_repository(repo, self.actual, planning=False)
+        with self.assertRaises(ValueError):
+            validate_repository(repo, self.actual)
+        with patch.dict("os.environ", {"TF_PHASE": "apply"}):
+            validate_claims(repo, dict(self.claims, sub="repo:example@123/infra@456:environment:apply"))
+            with self.assertRaises(ValueError):
+                validate_claims(repo, self.claims)

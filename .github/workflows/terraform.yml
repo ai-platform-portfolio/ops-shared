@@ -45,7 +45,7 @@ on:
       approver:
         description: Required deployment reviewer
         type: string
-        default: 'michaela-links'
+        required: true
       state-lock:
         description: Concurrency key for this state
         type: string
