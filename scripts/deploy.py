@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 from deployment_plan import fingerprint, verify as verify_plan
+from discover_federation import main as discover
 from federation_contract import verify as verify_federation
 from plan_preview import redact
 from settings import command, init_args, plan_args
@@ -46,6 +47,7 @@ def main():
     approval_controls(api(prefix), api(prefix + '/deployment-branch-policies'), os.environ['TF_APPROVER'])
     if phase == 'apply' and api(f'repos/{repository}/commits/main')['sha'] != os.environ['GITHUB_SHA']:
         raise ValueError('Deployment superseded by a newer main revision')
+    discover()
     verify_federation(lambda name: api(f'repos/{name}'))
     saved = Path(os.environ['RUNNER_TEMP']) / f'{phase}.tfplan'
     try:
