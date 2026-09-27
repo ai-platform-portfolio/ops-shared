@@ -6,8 +6,7 @@ import re
 import subprocess
 from pathlib import Path
 
-from federation_contract import verify
-from discover_federation import main as discover
+from federation_contract import main as discover, verify
 from settings import command, init_args, plan_args
 
 MARKER = "<!-- central-infrastructure-plan -->"

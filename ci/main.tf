@@ -1,3 +1,20 @@
+terraform {
+  required_version = "~> 1.12.0"
+  backend "azurerm" {}
+
+  required_providers {
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = "~> 4.0"
+    }
+  }
+}
+
+provider "azurerm" {
+  features {}
+  resource_provider_registrations = "none"
+}
+
 module "network" {
   source = "git::https://github.com/ai-platform-portfolio/terraform-modules.git//modules/network?ref=b0c5f712b8a760e4853fa4a6f417b4e1cbde2782"
 

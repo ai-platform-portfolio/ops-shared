@@ -7,8 +7,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from discover_federation import main as discover
-from federation_contract import verify as verify_federation
+from federation_contract import main as discover, verify as verify_federation
 from plan_preview import redact
 from settings import command, init_args, plan_args
 
