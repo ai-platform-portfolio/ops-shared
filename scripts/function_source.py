@@ -28,7 +28,7 @@ if __name__ == "__main__":
     if repository != "ai-platform-portfolio/ops-shared" or os.environ["GITHUB_REF"] != "refs/heads/main":
         raise ValueError("Function deployment must run from ops-shared main")
     prefix = f"repos/{repository}/environments/central-apply"
-    approval_controls(api(prefix), api(prefix + "/deployment-branch-policies"), "michaela-links")
+    approval_controls(api(prefix), api(prefix + "/deployment-branch-policies"), "michaelalinks")
     contract = api("repos/ai-platform-portfolio/terraform-modules/contents/ci/github.auto.tfvars.json?ref=main")
     repositories = json.loads(base64.b64decode(contract["content"]))["github_repositories"]
     os.environ["TF_PHASE"] = "apply"
