@@ -1,11 +1,11 @@
 name: Deploy central Function code
 on:
-  workflow_dispatch:
-    inputs:
-      application:
-        description: Key from functions/apps.json
-        required: true
-        default: profile
+  push:
+    branches: [main]
+    paths:
+      - 'functions/**'
+      - 'scripts/**'
+      - '.github/workflows/functions.yml'
 permissions:
   contents: read
 jobs:
@@ -15,7 +15,7 @@ jobs:
     timeout-minutes: 20
     environment: central-apply
     concurrency:
-      group: central-function-${{ inputs.application }}
+      group: central-function-profile
       cancel-in-progress: false
     permissions:
       contents: read
@@ -31,7 +31,7 @@ jobs:
       - name: Read reviewed application source
         id: app
         env:
-          APPLICATION: ${{ inputs.application }}
+          APPLICATION: profile
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/function_source.py
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065

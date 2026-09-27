@@ -11,8 +11,12 @@ the current file SHA are mandatory; malformed files fail without writes.
 
 ## Code publication
 
-This repository owns `.github/workflows/functions.yml`. After infrastructure is
-applied from terraform-modules, manually dispatch it on main with `application=profile`.
+This repository owns `.github/workflows/functions.yml`. Relevant changes merged
+to main automatically queue deployment of `profile`; there is no manual trigger.
+Apply the required infrastructure and federation from terraform-modules before
+approving code deployment. Configure the protected environment before merging
+the deployment workflow: referencing a missing environment does not establish
+an approval requirement.
 The `central-apply` environment requires the owner and main-only deployment with
 administrator bypass disabled. The workflow checks those controls and its real
 OIDC claims against the central Terraform declaration, then authenticates to Azure.
