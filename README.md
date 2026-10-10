@@ -146,3 +146,59 @@ Keep referenced commits reachable when merging; do not squash away revisions
 already pinned by callers.
 
 The migration checklist and live evidence are in [VALIDATION.md](VALIDATION.md).
+
+## Linear issue validation caller
+
+`linear-issue.yml` validates every issue ID in a PR's branch name against Linear,
+using OAuth client credentials with the `read` scope. Use Linear's **Copy git
+branch name**, for example `michaelalinks/ai-27-add-validation`. Missing IDs,
+inaccessible/nonexistent issues, credential failures and API errors fail the check.
+The check accepts issues across the connected workspace; it does not restrict the
+project, issue state or assignee. It verifies issue existence, not the integration's
+attachment state. Linear's GitHub integration separately links the PR from its issue
+ID. Branch creation remains unrestricted.
+
+Create a Linear OAuth application in the intended workspace and enable **Client
+credentials**. Store `LINEAR_CLIENT_ID` and `LINEAR_CLIENT_SECRET` as organization
+Actions secrets, granting selected-repository access to each caller. A fresh token
+is obtained for each run; no access or refresh token is stored. Private Linear teams
+must be accessible to the application. Never put credentials in a workflow or PR.
+
+Add this caller workflow, replacing `FULL_COMMIT_SHA` with a reviewed immutable
+ops-shared revision. Do not add path filters: every PR must run the required check.
+
+```yaml
+name: Linear issue check
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+permissions:
+  contents: read
+jobs:
+  linear:
+    uses: ai-platform-portfolio/ops-shared/.github/workflows/linear-issue.yml@FULL_COMMIT_SHA
+    secrets:
+      LINEAR_CLIENT_ID: ${{ secrets.LINEAR_CLIENT_ID }}
+      LINEAR_CLIENT_SECRET: ${{ secrets.LINEAR_CLIENT_SECRET }}
+  linear-issue-required:
+    if: always()
+    needs: linear
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          RESULT: ${{ needs.linear.result }}
+        run: test "$RESULT" = success
+```
+
+After testing, add **linear-issue-required**, with GitHub Actions as its source, to
+the active default-branch ruleset's required status checks. Keep existing checks
+and review requirements. Adding the caller alone does not enforce merging.
+The final gate fails if validation fails or is skipped. Fork and Dependabot PRs
+normally do not receive these secrets and fail closed; use a same-repository branch
+for reviewed contributions. Never switch to checking out PR code under
+`pull_request_target` to expose credentials.
+
+`ops-shared` includes its own caller in `linear-issue-check.yml`. Changes to the
+validator follow the release process above: commit helper code first, update its
+immutable checkout pin, then publish the workflow revision. Use merge commits to
+preserve helper revisions already referenced by workflows.

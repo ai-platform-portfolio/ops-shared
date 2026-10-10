@@ -1,0 +1,34 @@
+# Shared implementation: validates Linear issue IDs for any caller repository.
+# Runs only when another workflow calls it via workflow_call.
+# ops-shared calls it from linear-issue-check.yml; other repositories reference
+# this file at a full commit SHA (see the README caller example).
+
+name: Reusable Linear issue validation
+on:
+  workflow_call:
+    secrets:
+      LINEAR_CLIENT_ID:
+        required: true
+      LINEAR_CLIENT_SECRET:
+        required: true
+permissions:
+  contents: read
+jobs:
+  validate:
+    name: Linear issue validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Fetch the trusted validator
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ai-platform-portfolio/ops-shared
+          ref: 2fbf389284d6cd3e8d13c59ccda19efe9c21c661
+          sparse-checkout: scripts/linear_issue.py
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Validate every Linear issue ID in the branch name
+        env:
+          LINEAR_CLIENT_ID: ${{ secrets.LINEAR_CLIENT_ID }}
+          LINEAR_CLIENT_SECRET: ${{ secrets.LINEAR_CLIENT_SECRET }}
+        run: python3 scripts/linear_issue.py
