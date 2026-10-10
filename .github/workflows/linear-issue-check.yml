@@ -1,3 +1,8 @@
+# Local caller: runs the shared linear-issue.yml validator on ops-shared PRs.
+# The linear-issue-required job is the stable check required by our main ruleset.
+# Other repositories add their own caller like this, referencing the shared
+# implementation in ops-shared at a full commit SHA (see README).
+
 name: Linear issue check
 on:
   pull_request:

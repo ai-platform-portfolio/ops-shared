@@ -1,3 +1,8 @@
+# Shared implementation: validates Linear issue IDs for any caller repository.
+# Runs only when another workflow calls it via workflow_call.
+# ops-shared calls it from linear-issue-check.yml; other repositories reference
+# this file at a full commit SHA (see the README caller example).
+
 name: Reusable Linear issue validation
 on:
   workflow_call:
