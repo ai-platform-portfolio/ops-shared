@@ -100,6 +100,7 @@ jobs:
             -backend-config="container_name=$TF_STATE_CONTAINER"
       - name: Plan
         id: plan
+        shell: bash
         run: |
           args=()
           if [ -n "$TF_VARS_FILE" ]; then args+=("-var-file=$TF_VARS_FILE"); fi
