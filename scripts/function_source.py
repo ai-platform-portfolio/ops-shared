@@ -5,9 +5,27 @@ import base64
 import os
 from pathlib import Path, PurePosixPath
 import re
+import subprocess
 
-from deploy import api, approval_controls
 from federation_contract import verify as verify_federation
+
+
+def api(path):
+    return json.loads(subprocess.check_output(['gh', 'api', path], text=True))
+
+
+def approval_controls(environment, branches, owner):
+    reviewers = [rule for rule in environment['protection_rules'] if rule['type'] == 'required_reviewers']
+    policies = branches['branch_policies']
+    if (environment.get('can_admins_bypass') is not False
+            or len(reviewers) != 1
+            or [item['reviewer'].get('login') for item in reviewers[0]['reviewers']] != [owner]
+            or environment.get('deployment_branch_policy', {}).get('custom_branch_policies') is not True
+            or len(policies) != 1
+            or policies[0]['name'] != 'main'
+            or policies[0]['type'] != 'branch'):
+        raise ValueError('Apply environment must require the named owner, forbid bypass and allow main only')
+
 
 
 def source(config, application):

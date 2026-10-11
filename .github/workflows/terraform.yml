@@ -1,59 +1,34 @@
-name: Reusable infrastructure
+name: Infrastructure
 
 on:
   workflow_call:
     inputs:
-      operation:
-        description: preview, plan-only or deploy
+      root:
         type: string
-        default: 'preview'
-      engine:
-        description: terraform or tofu
+        default: terraform
+      backend-file:
         type: string
-        default: 'terraform'
-      version:
-        description: Exact engine version
+        default: backend.hcl
+      vars-file:
+        type: string
+        default: ''
+      preview-lock-file:
+        description: OpenTofu lock file relative to checkout
+        type: string
+        default: ''
+      terraform-version:
         type: string
         default: '1.12.2'
-      root:
-        description: Infrastructure root relative to caller checkout
+      tofu-version:
         type: string
-        default: 'ci'
-      backend-file:
-        description: Backend configuration relative to root
-        type: string
-        default: 'backend.hcl'
-      vars-file:
-        description: Optional variables file relative to root
-        type: string
-        default: ''
-      lock-file:
-        description: Optional alternate lock file relative to checkout
-        type: string
-        default: ''
-      federation-file:
-        description: Federation contract relative to checkout
-        type: string
-        default: 'ci/github.auto.tfvars.json'
+        default: '1.12.3'
       plan-environment:
-        description: Caller planning environment
         type: string
-        default: 'central-plan'
+        default: central-plan
       apply-environment:
-        description: Caller protected apply environment
         type: string
-        default: 'central-apply'
-      approver:
-        description: Required deployment reviewer
-        type: string
-        required: true
-      state-lock:
-        description: Concurrency key for this state
-        type: string
-        default: 'central-infrastructure'
+        default: central-apply
     secrets:
-      ACR_NAME:
-        required: false
       AZURE_TENANT_ID:
         required: true
       AZURE_SUBSCRIPTION_ID:
@@ -66,8 +41,6 @@ on:
         required: true
       TF_BACKEND_CONTAINER:
         required: true
-      TF_BACKEND_CONTAINER_SCOPE:
-        required: false
 
 permissions:
   contents: read
@@ -83,80 +56,102 @@ env:
   TF_STATE_RESOURCE_GROUP: ${{ secrets.TF_BACKEND_RESOURCE_GROUP }}
   TF_STATE_STORAGE_ACCOUNT: ${{ secrets.TF_BACKEND_RESOURCE_NAME }}
   TF_STATE_CONTAINER: ${{ secrets.TF_BACKEND_CONTAINER }}
-  TF_VAR_state_container_scope: ${{ secrets.TF_BACKEND_CONTAINER_SCOPE }}
-  TF_VAR_acr_name: ${{ secrets.ACR_NAME }}
   TF_ROOT: ${{ inputs.root }}
-  TF_ENGINE: ${{ inputs.engine }}
   TF_BACKEND_FILE: ${{ inputs.backend-file }}
   TF_VARS_FILE: ${{ inputs.vars-file }}
-  TF_FEDERATION_FILE: ${{ inputs.federation-file }}
-  TF_APPLY_ENVIRONMENT: ${{ inputs.apply-environment }}
-  TF_APPROVER: ${{ inputs.approver }}
-  GH_TOKEN: ${{ github.token }}
 
 jobs:
   plan:
     name: Plan
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 15
     environment: ${{ inputs.plan-environment }}
     permissions:
       contents: read
       id-token: write
       pull-requests: write
-    outputs:
-      fingerprint: ${{ steps.plan.outputs.fingerprint }}
-      changes: ${{ steps.plan.outputs.changes }}
+    env:
+      TF_ENGINE: ${{ github.event_name == 'pull_request' && 'tofu' || 'terraform' }}
     steps:
-      - name: Validate operation
-        env:
-          OPERATION: ${{ inputs.operation }}
-          EVENT: ${{ github.event_name }}
-          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
-        run: |
-          case "$OPERATION" in
-            preview)
-              test "$EVENT" = pull_request
-              test "$HEAD_REPOSITORY" = "$GITHUB_REPOSITORY"
-              ;;
-            plan-only|deploy)
-              test "$GITHUB_REF" = refs/heads/main
-              ;;
-            *) exit 1 ;;
-          esac
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
-      - id: tooling
-        uses: ai-platform-portfolio/ops-shared/actions/terraform@a9bef1116b621cf8a4c1ae381c30b256a6b7ccfc
+      - if: github.event_name == 'pull_request'
+        uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4
         with:
-          engine: ${{ inputs.engine }}
-          version: ${{ inputs.version }}
-          root: ${{ inputs.root }}
-          lock-file: ${{ inputs.lock-file }}
-      - name: Plan infrastructure
-        id: plan
+          tofu_version: ${{ inputs.tofu-version }}
+          tofu_wrapper: false
+      - if: github.event_name != 'pull_request'
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd
+        with:
+          terraform_version: ${{ inputs.terraform-version }}
+          terraform_wrapper: false
+      - name: Select OpenTofu lock file
+        if: github.event_name == 'pull_request' && inputs.preview-lock-file != ''
         env:
-          SCRIPTS: ${{ steps.tooling.outputs.scripts }}
-          TF_PHASE: plan
-          OPERATION: ${{ inputs.operation }}
+          LOCK_FILE: ${{ inputs.preview-lock-file }}
+        run: cp "$LOCK_FILE" "$TF_ROOT/.terraform.lock.hcl"
+      - name: Init
         run: |
-          if [ "$OPERATION" = preview ]; then
-            python3 "$SCRIPTS/plan_preview.py"
-          else
-            python3 "$SCRIPTS/deploy.py"
-          fi
+          "$TF_ENGINE" -chdir="$TF_ROOT" init -input=false -lockfile=readonly -no-color \
+            -backend-config="$TF_BACKEND_FILE" \
+            -backend-config="resource_group_name=$TF_STATE_RESOURCE_GROUP" \
+            -backend-config="storage_account_name=$TF_STATE_STORAGE_ACCOUNT" \
+            -backend-config="container_name=$TF_STATE_CONTAINER"
+      - name: Plan
+        id: plan
+        run: |
+          args=()
+          if [ -n "$TF_VARS_FILE" ]; then args+=("-var-file=$TF_VARS_FILE"); fi
+          "$TF_ENGINE" -chdir="$TF_ROOT" plan -input=false -lock-timeout=5m -no-color \
+            "${args[@]}" -out="$RUNNER_TEMP/infrastructure.tfplan" 2>&1 | tee "$RUNNER_TEMP/plan.txt"
+          cat "$RUNNER_TEMP/plan.txt" >> "$GITHUB_STEP_SUMMARY"
+      - name: OpenTofu PR comment
+        if: always() && github.event_name == 'pull_request' && steps.plan.outcome != 'skipped'
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+        env:
+          PLAN_RESULT: ${{ steps.plan.outcome }}
+        with:
+          script: |
+            const fs = require('fs');
+            const path = `${process.env.RUNNER_TEMP}/plan.txt`;
+            let plan = fs.existsSync(path) ? fs.readFileSync(path, 'utf8') : 'Plan could not run; see the workflow logs.';
+            for (const [key, value] of Object.entries(process.env)) {
+              if (value && value !== 'true' && value !== 'false' &&
+                  /^(ARM_|TF_STATE_)|TOKEN|SECRET|PASSWORD/.test(key)) {
+                plan = plan.split(value).join('[redacted]');
+              }
+            }
+            plan = plan.replace(/\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b/gi, '[redacted-id]').replace(/```/g, "'''").slice(0, 50000);
+            const marker = '<!-- infrastructure-plan -->';
+            const body = `${marker}\n### OpenTofu plan (${process.env.PLAN_RESULT})\n\n<details><summary>Show plan</summary>\n\n\`\`\`hcl\n${plan}\n\`\`\`\n</details>`;
+            const params = {...context.repo, issue_number: context.issue.number};
+            const comments = await github.paginate(github.rest.issues.listComments, params);
+            const existing = comments.find(c => c.user.login === 'github-actions[bot]' &&
+              (c.body.includes(marker) || c.body.includes('<!-- central-infrastructure-plan -->')));
+            if (existing) {
+              await github.rest.issues.updateComment({...context.repo, comment_id: existing.id, body});
+            } else {
+              await github.rest.issues.createComment({...params, body});
+            }
+      - name: Save plan for Apply
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: infrastructure-plan
+          path: ${{ runner.temp }}/infrastructure.tfplan
+          retention-days: 1
+          if-no-files-found: error
 
   apply:
     name: Apply
     needs: plan
-    if: inputs.operation == 'deploy' && needs.plan.outputs.changes == 'true'
-    concurrency:
-      group: ${{ inputs.state-lock }}
-      cancel-in-progress: false
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
     environment: ${{ inputs.apply-environment }}
+    concurrency:
+      group: terraform-apply-${{ inputs.root }}
+      cancel-in-progress: false
     permissions:
       contents: read
       id-token: write
@@ -164,16 +159,21 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
-      - id: tooling
-        uses: ai-platform-portfolio/ops-shared/actions/terraform@a9bef1116b621cf8a4c1ae381c30b256a6b7ccfc
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd
         with:
-          engine: ${{ inputs.engine }}
-          version: ${{ inputs.version }}
-          root: ${{ inputs.root }}
-          lock-file: ${{ inputs.lock-file }}
-      - name: Re-plan and apply only the reviewed fingerprint
-        env:
-          SCRIPTS: ${{ steps.tooling.outputs.scripts }}
-          TF_PHASE: apply
-          EXPECTED_FINGERPRINT: ${{ needs.plan.outputs.fingerprint }}
-        run: python3 "$SCRIPTS/deploy.py"
+          terraform_version: ${{ inputs.terraform-version }}
+          terraform_wrapper: false
+      - name: Init
+        run: |
+          terraform -chdir="$TF_ROOT" init -input=false -lockfile=readonly -no-color \
+            -backend-config="$TF_BACKEND_FILE" \
+            -backend-config="resource_group_name=$TF_STATE_RESOURCE_GROUP" \
+            -backend-config="storage_account_name=$TF_STATE_STORAGE_ACCOUNT" \
+            -backend-config="container_name=$TF_STATE_CONTAINER"
+      - name: Download plan
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: infrastructure-plan
+          path: ${{ runner.temp }}
+      - name: Apply
+        run: terraform -chdir="$TF_ROOT" apply -input=false -lock-timeout=5m -no-color "$RUNNER_TEMP/infrastructure.tfplan"

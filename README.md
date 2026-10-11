@@ -4,9 +4,8 @@ Reusable GitHub Actions workflows for `ai-platform-portfolio`. Workload reposito
 own their infrastructure, state, policy and deployment environments. This repository
 owns shared workflow orchestration and its tests.
 
-Terraform helpers originate in `terraform-modules`; lint and review helpers
-originate in `engineering-standards`. Existing caller approval requirements remain
-in force. Workflows are reusable `workflow_call` implementations, not files to copy
+Terraform runs directly through the official setup actions and CLI commands.
+Lint and review helpers originate in `engineering-standards`. Workflows are reusable `workflow_call` implementations, not files to copy
 into every workload. All consumers pin full commit SHAs.
 
 Run `make test` for helper tests. Live caller runs are required before declaring the
@@ -17,7 +16,7 @@ approval behaviour.
 
 | Workflow | Caller responsibility | Shared behaviour |
 |---|---|---|
-| `terraform.yml` | Root, backend, lock file, federation contract, secrets and protected environments | PR preview; main plan; approved re-plan and fingerprint-checked apply |
+| `terraform.yml` | Root, backend, tfvars, secrets and environments | OpenTofu PR plan/comment; Terraform plan; approved saved-plan apply |
 | `workflow-lint.yml` | PR/main triggers | Actionlint with mandatory ShellCheck |
 | `quality.yml` | Tracked policy, CODEOWNERS and PR trigger | Trusted-base policy, current-head owner adoption, JSON report |
 | `review.yml` | Review trigger and exact original workflow/job names | Rerun the original policy job using trusted code |
@@ -32,16 +31,19 @@ generic command runner. Review automation never checks out PR code with its
 
 ## Terraform caller
 
-Replace `FULL_COMMIT_SHA` with a reviewed 40-character ops-shared revision and
-`YOUR_REVIEWER_LOGIN` with the caller's required deployment reviewer:
+Call one pinned workflow from the app repository:
 
 ```yaml
-name: Infrastructure preview
-on: pull_request
+name: Infrastructure
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
-  plan:
+  infrastructure:
     uses: ai-platform-portfolio/ops-shared/.github/workflows/terraform.yml@FULL_COMMIT_SHA
     permissions:
       contents: read
@@ -49,54 +51,35 @@ jobs:
       pull-requests: write
     secrets: inherit
     with:
-      operation: preview
-      approver: YOUR_REVIEWER_LOGIN
-      engine: tofu
-      version: 1.12.3
-      root: ci
-      lock-file: ci/opentofu.lock.hcl
+      root: terraform
+      vars-file: environments/uk-south.tfvars
+      preview-lock-file: terraform/opentofu.lock.hcl
 ```
 
-The reusable workflow has exactly two jobs: **Plan** and **Apply**. Plan runs the
-operation checks as a step, then creates the PR preview or main plan. Apply waits
-for Plan and runs only for approved deployments with changes. Preview and
-plan-only runs skip Apply. Invalid operations, non-main deployments and fork
-previews fail in Plan before checkout or cloud authentication.
+There are exactly two jobs, **Plan** and **Apply**, using the official
+`opentofu/setup-opentofu` and `hashicorp/setup-terraform` actions and direct CLI
+commands. Plan runs every pipeline. PRs use OpenTofu and update one plan comment;
+other events use Terraform. Apply is skipped outside main and waits for the
+caller's protected `central-apply` environment approval. Configure the required
+reviewers in that environment. The template does not inspect reviewer policies
+or compare fingerprints.
 
-Require the caller's nested Plan check (for example `plan / Plan`) in its active
-ruleset. A separate result/gate job is unnecessary. Existing callers with a
-legacy result gate may remove it when upgrading their pinned workflow revision.
+Main plans are uploaded with one-day retention. Apply downloads and applies
+that exact saved plan, without re-planning. Terraform rejects stale saved plans.
+PRs never upload binary plans. Saved plans can contain sensitive Terraform values;
+keep secret values in cloud secret managers and pass references to resources.
 
-`operation: deploy` is main-only. It plans in `plan-environment`, defaults to
-`central-plan`, and applies only when resource or output changes exist. The
-`apply-environment` defaults to `central-apply`; it must require the named
-`approver`, forbid administrator bypass and permit only main. The reviewer is a
-required caller input with no personal-account default. After approval,
-the workflow rejects superseded commits, re-plans and compares the entire plan
-apart from its timestamp. Changed plans require a fresh run and approval.
-`operation: plan-only` exercises the main planning path without enabling apply.
-Manual dispatch in the module caller defaults to plan-only.
+`root` defaults to `terraform`; `backend-file` defaults to `backend.hcl` relative
+to the root. `vars-file` is optional and relative to the root. `preview-lock-file`
+is an optional OpenTofu lock file relative to checkout. Terraform defaults to
+1.12.2 and OpenTofu to 1.12.3; versions and plan/apply environments are configurable.
+Commit provider checksums for the Linux runner. Fork PRs do not run cloud plans.
 
-Terraform defaults to 1.12.2; preview callers explicitly select OpenTofu 1.12.3.
-`root` and `federation-file` are relative to checkout; `backend-file` and optional
-`vars-file` are relative to the root. `lock-file` is an optional alternate lock
-file relative to checkout. Absolute paths and parent traversal are rejected. Configuration
-auto tfvars remain supported. There are no arbitrary pre-step shell inputs.
-
-Callers provide `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `AZURE_CLIENT_ID`,
+Callers supply `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `AZURE_CLIENT_ID`,
 `TF_BACKEND_RESOURCE_GROUP`, `TF_BACKEND_RESOURCE_NAME` and
-`TF_BACKEND_CONTAINER` as secrets. `TF_BACKEND_CONTAINER_SCOPE` optionally maps
-to the existing root's `state_container_scope` input. Environment secrets belong
-to the caller; reuse does not move its OIDC identity to ops-shared. The federation
-JSON uses the existing `github_repositories` map and verifies repository IDs and
-phase-specific token claims before authentication.
-
-Use the same `state-lock` value for callers sharing one backend within a
-repository. GitHub concurrency groups are repository-scoped; the backend lock
-remains the cross-repository safeguard. Keep one deployment owner per state.
-State and saved plans are never uploaded. Plans remain runner-local and are
-removed on success or failure. PR comments redact identifiers and secret inputs;
-authentication failures publish safe failure text.
+`TF_BACKEND_CONTAINER` through GitHub secrets. OIDC uses the caller repository's
+plan and apply environments. No credentials are committed. Apply concurrency
+serializes the same root within a repository; remote state locking remains active.
 
 ## Policy and review callers
 
