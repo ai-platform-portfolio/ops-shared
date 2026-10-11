@@ -54,7 +54,7 @@ def failure_diagnostics(result):
     start = diagnostics.find('Error: ')
     if start < 0:
         return 'Raw diagnostics withheld; no Terraform error block was available.'
-    return redact(diagnostics[start:][-12000:], secrets)
+    return redact(diagnostics[start:], secrets)[-12000:]
 
 
 def comment_body(head, status, text):
