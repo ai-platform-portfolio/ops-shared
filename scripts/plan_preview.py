@@ -122,6 +122,10 @@ def preview(saved):
         if result.returncode:
             codes = sorted(set(re.findall(r"AADSTS\d+", result.stdout + result.stderr)))
             detail = ", ".join(codes) or f"exit {result.returncode}"
+            for label in ("Failed to install provider", "Failed to query available provider packages",
+                          "Inconsistent dependency lock file", "Unsupported Terraform Core version"):
+                if "Error: " + label in result.stdout + result.stderr:
+                    detail += "; " + label
             return (
                 "failed",
                 f"Infrastructure {stage} failed ({detail}). No successful plan was produced.\nRaw diagnostics are withheld to avoid publishing credentials or resource identifiers.",
