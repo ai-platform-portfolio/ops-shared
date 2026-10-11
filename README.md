@@ -89,6 +89,16 @@ exact subject. Bootstrap those roles before enabling this input. Azure-only call
 leave it empty and retain their current behaviour. The Azure backend still uses
 the Azure secrets above.
 
+For Google Cloud workloads, set `google-auth: true` and supply `GOOGLE_PROJECT_ID`,
+`GOOGLE_WORKLOAD_IDENTITY_PROVIDER`, and the phase-specific
+`GOOGLE_PLAN_SERVICE_ACCOUNT`/`GOOGLE_APPLY_SERVICE_ACCOUNT` as environment secrets.
+The provider secret refers to that environment's exact-subject OIDC provider.
+The official `google-github-actions/auth` action impersonates the appropriate
+service account and passes a masked, short-lived access token to Terraform and
+OpenTofu through `GOOGLE_OAUTH_ACCESS_TOKEN`. Credential files are disabled.
+`GOOGLE_PROJECT_ID` is also passed as `TF_VAR_gcp_project_id`. Bootstrap federation
+and API enablement separately before enabling Google authentication in a caller.
+
 ## Policy and review callers
 
 Call `quality.yml` on pull requests with `contents: read` and
