@@ -9,7 +9,7 @@ from pathlib import Path
 
 from deployment_plan import fingerprint, verify as verify_plan
 from federation_contract import verify as verify_federation
-from plan_preview import redact
+from plan_preview import failure_diagnostics, redact
 from settings import command, init_args, plan_args
 
 
@@ -47,7 +47,8 @@ def run(args):
         labels = [heading for heading in headings if heading in safe_headings]
         print(f"::error::Infrastructure {args[0]} failed ({detail})" +
               (": " + "; ".join(labels) if labels else ""), file=sys.stderr)
-        raise RuntimeError('Infrastructure command failed; raw diagnostics withheld to protect credentials and identifiers')
+        print(failure_diagnostics(result), file=sys.stderr)
+        raise RuntimeError('Infrastructure command failed; see redacted diagnostics')
     return result.stdout
 
 

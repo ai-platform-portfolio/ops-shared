@@ -44,6 +44,15 @@ def redact(text, secrets, plan=None):
     return text.replace("```", "'''")
 
 
+
+def failure_diagnostics(result):
+    secrets = [value for key, value in os.environ.items() if value and
+               (key.startswith(('ARM_', 'TF_STATE_', 'TF_VAR_', 'ACTIONS_ID_TOKEN_'))
+                or any(word in key for word in ('TOKEN', 'SECRET', 'PASSWORD')))
+               and value not in {'true', 'false'}]
+    return redact(result.stderr[-12000:], secrets)
+
+
 def comment_body(head, status, text):
     if len(text) > 50000:
         text = text[:50000] + "\n[Plan truncated at the comment size limit.]"
@@ -128,7 +137,7 @@ def preview(saved):
                     detail += "; " + label
             return (
                 "failed",
-                f"Infrastructure {stage} failed ({detail}). No successful plan was produced.\nRaw diagnostics are withheld to avoid publishing credentials or resource identifiers.",
+                f"Infrastructure {stage} failed ({detail}). No successful plan was produced.\n" + failure_diagnostics(result),
             )
     output = subprocess.check_output(
         [*command(), "show", "-no-color", str(saved)], text=True

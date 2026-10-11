@@ -1,4 +1,6 @@
 import json
+import io
+from contextlib import redirect_stderr
 import os
 import tempfile
 import unittest
@@ -71,3 +73,16 @@ class Contract(unittest.TestCase):
                     deploy.main()
                 self.assertFalse(any(call.args[0][0] == 'apply' for call in run.call_args_list))
             self.assertFalse(saved.exists())
+
+    def test_command_failure_reports_stage_and_code_without_raw_secrets(self):
+        result = type('Result', (), {'returncode': 1, 'stdout': '',
+            'stderr': 'Error: Failed to install provider\nAADSTS70021 token=private-credential tenant=private-id'})()
+        diagnostics = io.StringIO()
+        with patch('deploy.command', return_value=['terraform']), \
+             patch('deploy.subprocess.run', return_value=result), redirect_stderr(diagnostics):
+            with self.assertRaises(RuntimeError):
+                deploy.run(['init', '-backend-config=private-id'])
+        self.assertIn('init failed (AADSTS70021)', diagnostics.getvalue())
+        self.assertIn('Failed to install provider', diagnostics.getvalue())
+        self.assertNotIn('private-credential', diagnostics.getvalue())
+        self.assertNotIn('private-id', diagnostics.getvalue())
