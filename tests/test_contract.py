@@ -78,7 +78,8 @@ class Contract(unittest.TestCase):
         result = type('Result', (), {'returncode': 1, 'stdout': '',
             'stderr': 'Error: Failed to install provider\nAADSTS70021 token=private-credential tenant=private-id'})()
         diagnostics = io.StringIO()
-        with patch('deploy.command', return_value=['terraform']), \
+        with patch.dict(os.environ, ARM_TENANT_ID='private-id', GH_TOKEN='private-credential'), \
+             patch('deploy.command', return_value=['terraform']), \
              patch('deploy.subprocess.run', return_value=result), redirect_stderr(diagnostics):
             with self.assertRaises(RuntimeError):
                 deploy.run(['init', '-backend-config=private-id'])

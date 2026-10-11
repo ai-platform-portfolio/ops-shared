@@ -50,7 +50,11 @@ def failure_diagnostics(result):
                (key.startswith(('ARM_', 'TF_STATE_', 'TF_VAR_', 'ACTIONS_ID_TOKEN_'))
                 or any(word in key for word in ('TOKEN', 'SECRET', 'PASSWORD')))
                and value not in {'true', 'false'}]
-    return redact(result.stderr[-12000:], secrets)
+    diagnostics = result.stderr
+    start = diagnostics.find('Error: ')
+    if start < 0:
+        return 'Raw diagnostics withheld; no Terraform error block was available.'
+    return redact(diagnostics[start:][-12000:], secrets)
 
 
 def comment_body(head, status, text):
