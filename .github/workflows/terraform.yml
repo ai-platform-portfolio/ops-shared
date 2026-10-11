@@ -1,4 +1,5 @@
 name: Reusable infrastructure
+
 on:
   workflow_call:
     inputs:
@@ -67,8 +68,10 @@ on:
         required: true
       TF_BACKEND_CONTAINER_SCOPE:
         required: false
+
 permissions:
   contents: read
+
 env:
   TF_IN_AUTOMATION: 'true'
   ARM_USE_OIDC: 'true'
@@ -90,41 +93,10 @@ env:
   TF_APPLY_ENVIRONMENT: ${{ inputs.apply-environment }}
   TF_APPROVER: ${{ inputs.approver }}
   GH_TOKEN: ${{ github.token }}
+
 jobs:
-  result:
-    needs: [contract, preview, plan, apply]
-    if: always()
-    runs-on: ubuntu-latest
-    steps:
-      - env:
-          OPERATION: ${{ inputs.operation }}
-          CONTRACT: ${{ needs.contract.result }}
-          PREVIEW: ${{ needs.preview.result }}
-          PLAN: ${{ needs.plan.result }}
-          CHANGES: ${{ needs.plan.outputs.changes }}
-          APPLY: ${{ needs.apply.result }}
-        run: |
-          test "$CONTRACT" = success
-          if [ "$OPERATION" = preview ]; then
-            test "$PREVIEW" = success
-          else
-            test "$PLAN" = success
-            if [ "$OPERATION" = deploy ] && [ "$CHANGES" = true ]; then
-              test "$APPLY" = success
-            else
-              test "$APPLY" = skipped
-            fi
-          fi
-  contract:
-    runs-on: ubuntu-latest
-    steps:
-      - env:
-          OPERATION: ${{ inputs.operation }}
-        run: |
-          case "$OPERATION" in preview|plan-only|deploy) ;; *) exit 1 ;; esac
-  preview:
-    needs: contract
-    if: inputs.operation == 'preview' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+  plan:
+    name: Plan
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: ${{ inputs.plan-environment }}
@@ -132,34 +104,26 @@ jobs:
       contents: read
       id-token: write
       pull-requests: write
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with:
-          persist-credentials: false
-      - id: tooling
-        uses: ai-platform-portfolio/ops-shared/actions/terraform@feac0efbe0f9910fb13e89c3da8698a92aa60423
-        with:
-          engine: ${{ inputs.engine }}
-          version: ${{ inputs.version }}
-          root: ${{ inputs.root }}
-          lock-file: ${{ inputs.lock-file }}
-      - name: Plan and update PR preview
-        env:
-          SCRIPTS: ${{ steps.tooling.outputs.scripts }}
-        run: python3 "$SCRIPTS/plan_preview.py"
-  plan:
-    needs: contract
-    if: inputs.operation != 'preview' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    environment: ${{ inputs.plan-environment }}
-    permissions:
-      contents: read
-      id-token: write
     outputs:
       fingerprint: ${{ steps.plan.outputs.fingerprint }}
       changes: ${{ steps.plan.outputs.changes }}
     steps:
+      - name: Validate operation
+        env:
+          OPERATION: ${{ inputs.operation }}
+          EVENT: ${{ github.event_name }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          case "$OPERATION" in
+            preview)
+              test "$EVENT" = pull_request
+              test "$HEAD_REPOSITORY" = "$GITHUB_REPOSITORY"
+              ;;
+            plan-only|deploy)
+              test "$GITHUB_REF" = refs/heads/main
+              ;;
+            *) exit 1 ;;
+          esac
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
@@ -170,12 +134,21 @@ jobs:
           version: ${{ inputs.version }}
           root: ${{ inputs.root }}
           lock-file: ${{ inputs.lock-file }}
-      - id: plan
+      - name: Plan infrastructure
+        id: plan
         env:
           SCRIPTS: ${{ steps.tooling.outputs.scripts }}
           TF_PHASE: plan
-        run: python3 "$SCRIPTS/deploy.py"
+          OPERATION: ${{ inputs.operation }}
+        run: |
+          if [ "$OPERATION" = preview ]; then
+            python3 "$SCRIPTS/plan_preview.py"
+          else
+            python3 "$SCRIPTS/deploy.py"
+          fi
+
   apply:
+    name: Apply
     needs: plan
     if: inputs.operation == 'deploy' && needs.plan.outputs.changes == 'true'
     concurrency:

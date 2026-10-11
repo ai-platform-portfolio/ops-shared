@@ -55,19 +55,17 @@ jobs:
       version: 1.12.3
       root: ci
       lock-file: ci/opentofu.lock.hcl
-  infrastructure-plan-required:
-    if: always()
-    needs: plan
-    runs-on: ubuntu-latest
-    steps:
-      - env:
-          RESULT: ${{ needs.plan.result }}
-        run: test "$RESULT" = success
 ```
 
-Require the caller's stable `infrastructure-plan-required` check in its active
-ruleset. The shared result job fails when a requested preview is skipped,
-including fork PRs. Trusted same-repository branches are required for live plans.
+The reusable workflow has exactly two jobs: **Plan** and **Apply**. Plan runs the
+operation checks as a step, then creates the PR preview or main plan. Apply waits
+for Plan and runs only for approved deployments with changes. Preview and
+plan-only runs skip Apply. Invalid operations, non-main deployments and fork
+previews fail in Plan before checkout or cloud authentication.
+
+Require the caller's nested Plan check (for example `plan / Plan`) in its active
+ruleset. A separate result/gate job is unnecessary. Existing callers with a
+legacy result gate may remove it when upgrading their pinned workflow revision.
 
 `operation: deploy` is main-only. It plans in `plan-environment`, defaults to
 `central-plan`, and applies only when resource or output changes exist. The
