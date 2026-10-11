@@ -29,6 +29,9 @@ on:
         type: string
         default: central-apply
     secrets:
+      TERRAFORM_VARIABLES_JSON:
+        description: Optional JSON object of Terraform input variables supplied externally
+        required: false
       AZURE_TENANT_ID:
         required: true
       AZURE_SUBSCRIPTION_ID:
@@ -46,6 +49,7 @@ permissions:
   contents: read
 
 env:
+  TF_VARIABLES_JSON: ${{ secrets.TERRAFORM_VARIABLES_JSON }}
   TF_IN_AUTOMATION: 'true'
   ARM_USE_OIDC: 'true'
   ARM_USE_AZUREAD: 'true'
@@ -93,6 +97,10 @@ jobs:
         run: cp "$LOCK_FILE" "$TF_ROOT/.terraform.lock.hcl"
       - name: Init
         run: |
+          if [ -n "$TF_VARIABLES_JSON" ]; then
+            umask 077
+            printf '%s' "$TF_VARIABLES_JSON" > "$TF_ROOT/external.auto.tfvars.json"
+          fi
           "$TF_ENGINE" -chdir="$TF_ROOT" init -input=false -lockfile=readonly -no-color \
             -backend-config="$TF_BACKEND_FILE" \
             -backend-config="resource_group_name=$TF_STATE_RESOURCE_GROUP" \
@@ -165,6 +173,10 @@ jobs:
           terraform_wrapper: false
       - name: Init
         run: |
+          if [ -n "$TF_VARIABLES_JSON" ]; then
+            umask 077
+            printf '%s' "$TF_VARIABLES_JSON" > "$TF_ROOT/external.auto.tfvars.json"
+          fi
           terraform -chdir="$TF_ROOT" init -input=false -lockfile=readonly -no-color \
             -backend-config="$TF_BACKEND_FILE" \
             -backend-config="resource_group_name=$TF_STATE_RESOURCE_GROUP" \

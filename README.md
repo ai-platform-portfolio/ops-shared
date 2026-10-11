@@ -183,3 +183,9 @@ for reviewed contributions. Never switch to checking out PR code under
 validator follow the release process above: commit helper code first, update its
 immutable checkout pin, then publish the workflow revision. Use merge commits to
 preserve helper revisions already referenced by workflows.
+
+Application repositories can supply the optional `TERRAFORM_VARIABLES_JSON`
+GitHub secret to the reusable Terraform workflow. Its value is a JSON object
+of Terraform inputs, such as APIM publisher details. Plan and Apply write it
+to a restricted temporary workspace variable file; values remain outside Git.
+Mark corresponding root/module variables sensitive to suppress plan output.
