@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -32,6 +33,20 @@ def approval_controls(environment, branches, owner):
 def run(args):
     result = subprocess.run([*command(), *args], capture_output=True, text=True)
     if result.returncode:
+        codes = sorted(set(re.findall(r"AADSTS\d+", result.stdout + result.stderr)))
+        detail = ", ".join(codes) or f"exit {result.returncode}"
+        # Report a stage and standard error headings, never raw command output.
+        headings = re.findall(r"^Error: ([^\n]+)", result.stdout + result.stderr, re.MULTILINE)
+        safe_headings = {
+            "Inconsistent dependency lock file", "Failed to install provider",
+            "Failed to query available provider packages", "Unsupported Terraform Core version",
+            "Backend configuration changed", "Error acquiring the state lock",
+            "Failed to get existing workspaces", "Invalid provider configuration",
+            "Insufficient features blocks", "Unsupported argument", "Reference to undeclared resource",
+        }
+        labels = [heading for heading in headings if heading in safe_headings]
+        print(f"::error::Infrastructure {args[0]} failed ({detail})" +
+              (": " + "; ".join(labels) if labels else ""), file=sys.stderr)
         raise RuntimeError('Infrastructure command failed; raw diagnostics withheld to protect credentials and identifiers')
     return result.stdout
 
@@ -43,13 +58,17 @@ def main():
     repository = os.environ['GITHUB_REPOSITORY']
     environment = os.environ['TF_APPLY_ENVIRONMENT']
     prefix = f'repos/{repository}/environments/{environment}'
+    print('Checking protected Apply environment.', flush=True)
     approval_controls(api(prefix), api(prefix + '/deployment-branch-policies'), os.environ['TF_APPROVER'])
     if phase == 'apply' and api(f'repos/{repository}/commits/main')['sha'] != os.environ['GITHUB_SHA']:
         raise ValueError('Deployment superseded by a newer main revision')
+    print('Checking federation contract.', flush=True)
     verify_federation(lambda name: api(f'repos/{name}'))
     saved = Path(os.environ['RUNNER_TEMP']) / f'{phase}.tfplan'
     try:
+        print('Initializing infrastructure backend and providers.', flush=True)
         run(init_args())
+        print('Planning infrastructure.', flush=True)
         output = run(plan_args(saved))
         plan = json.loads(run(['show', '-json', str(saved)]))
         secrets = [value for key, value in os.environ.items()
