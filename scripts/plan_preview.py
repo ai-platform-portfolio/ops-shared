@@ -44,6 +44,19 @@ def redact(text, secrets, plan=None):
     return text.replace("```", "'''")
 
 
+
+def failure_diagnostics(result):
+    secrets = [value for key, value in os.environ.items() if value and
+               (key.startswith(('ARM_', 'TF_STATE_', 'TF_VAR_', 'ACTIONS_ID_TOKEN_'))
+                or any(word in key for word in ('TOKEN', 'SECRET', 'PASSWORD')))
+               and value not in {'true', 'false'}]
+    diagnostics = result.stderr
+    start = diagnostics.find('Error: ')
+    if start < 0:
+        return 'Raw diagnostics withheld; no Terraform error block was available.'
+    return redact(diagnostics[start:], secrets)[-12000:]
+
+
 def comment_body(head, status, text):
     if len(text) > 50000:
         text = text[:50000] + "\n[Plan truncated at the comment size limit.]"
@@ -122,9 +135,13 @@ def preview(saved):
         if result.returncode:
             codes = sorted(set(re.findall(r"AADSTS\d+", result.stdout + result.stderr)))
             detail = ", ".join(codes) or f"exit {result.returncode}"
+            for label in ("Failed to install provider", "Failed to query available provider packages",
+                          "Inconsistent dependency lock file", "Unsupported Terraform Core version"):
+                if "Error: " + label in result.stdout + result.stderr:
+                    detail += "; " + label
             return (
                 "failed",
-                f"Infrastructure {stage} failed ({detail}). No successful plan was produced.\nRaw diagnostics are withheld to avoid publishing credentials or resource identifiers.",
+                f"Infrastructure {stage} failed ({detail}). No successful plan was produced.\n" + failure_diagnostics(result),
             )
     output = subprocess.check_output(
         [*command(), "show", "-no-color", str(saved)], text=True
