@@ -22,6 +22,10 @@ on:
       tofu-version:
         type: string
         default: '1.12.3'
+      aws-region:
+        description: AWS region; leave empty for Azure-only roots
+        type: string
+        default: ''
       plan-environment:
         type: string
         default: central-plan
@@ -35,6 +39,12 @@ on:
         required: true
       AZURE_CLIENT_ID:
         required: true
+      AWS_ACCOUNT_ID:
+        required: false
+      AWS_PLAN_ROLE_ARN:
+        required: false
+      AWS_APPLY_ROLE_ARN:
+        required: false
       TF_BACKEND_RESOURCE_GROUP:
         required: true
       TF_BACKEND_RESOURCE_NAME:
@@ -53,6 +63,7 @@ env:
   ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
   ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
   ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+  TF_VAR_aws_account_id: ${{ secrets.AWS_ACCOUNT_ID }}
   TF_STATE_RESOURCE_GROUP: ${{ secrets.TF_BACKEND_RESOURCE_GROUP }}
   TF_STATE_STORAGE_ACCOUNT: ${{ secrets.TF_BACKEND_RESOURCE_NAME }}
   TF_STATE_CONTAINER: ${{ secrets.TF_BACKEND_CONTAINER }}
@@ -91,6 +102,15 @@ jobs:
         env:
           LOCK_FILE: ${{ inputs.preview-lock-file }}
         run: cp "$LOCK_FILE" "$TF_ROOT/.terraform.lock.hcl"
+      - name: AWS plan identity
+        if: inputs.aws-region != ''
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd
+        with:
+          aws-region: ${{ inputs.aws-region }}
+          role-to-assume: ${{ secrets.AWS_PLAN_ROLE_ARN }}
+          allowed-account-ids: ${{ secrets.AWS_ACCOUNT_ID }}
+          mask-aws-account-id: true
+          unset-current-credentials: true
       - name: Init
         run: |
           "$TF_ENGINE" -chdir="$TF_ROOT" init -input=false -lockfile=readonly -no-color \
@@ -119,7 +139,7 @@ jobs:
             let plan = fs.existsSync(path) ? fs.readFileSync(path, 'utf8') : 'Plan could not run; see the workflow logs.';
             for (const [key, value] of Object.entries(process.env)) {
               if (value && value !== 'true' && value !== 'false' &&
-                  /^(ARM_|TF_STATE_)|TOKEN|SECRET|PASSWORD/.test(key)) {
+                  /^(ARM_|AWS_|TF_STATE_|TF_VAR_aws_)|TOKEN|SECRET|PASSWORD/.test(key)) {
                 plan = plan.split(value).join('[redacted]');
               }
             }
@@ -164,6 +184,15 @@ jobs:
         with:
           terraform_version: ${{ inputs.terraform-version }}
           terraform_wrapper: false
+      - name: AWS apply identity
+        if: inputs.aws-region != ''
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd
+        with:
+          aws-region: ${{ inputs.aws-region }}
+          role-to-assume: ${{ secrets.AWS_APPLY_ROLE_ARN }}
+          allowed-account-ids: ${{ secrets.AWS_ACCOUNT_ID }}
+          mask-aws-account-id: true
+          unset-current-credentials: true
       - name: Init
         run: |
           terraform -chdir="$TF_ROOT" init -input=false -lockfile=readonly -no-color \

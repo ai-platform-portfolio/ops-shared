@@ -81,6 +81,14 @@ Callers supply `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `AZURE_CLIENT_ID`,
 plan and apply environments. No credentials are committed. Apply concurrency
 serializes the same root within a repository; remote state locking remains active.
 
+For AWS workloads, also set `aws-region` and supply `AWS_ACCOUNT_ID`,
+`AWS_PLAN_ROLE_ARN` and `AWS_APPLY_ROLE_ARN` through GitHub secrets. The official
+`aws-actions/configure-aws-credentials` action exchanges the job's OIDC token for
+temporary credentials. Each role must trust its matching caller environment's
+exact subject. Bootstrap those roles before enabling this input. Azure-only callers
+leave it empty and retain their current behaviour. The Azure backend still uses
+the Azure secrets above.
+
 ## Policy and review callers
 
 Call `quality.yml` on pull requests with `contents: read` and
