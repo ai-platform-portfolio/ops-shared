@@ -83,3 +83,44 @@ class OnboardingTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 onboard("fixture", 42, "fixture-key", azure)
         self.assertEqual(azure.call_count, 1)
+
+    def test_delete_matches_immutable_id_and_preserves_other_trust(self):
+        from onboarding import remove_repository
+        def credential(name, subject, issuer="https://token.actions.githubusercontent.com"):
+            return {"name": name, "properties": {"subject": subject, "issuer": issuer,
+                    "audiences": ["api://AzureADTokenExchange"]}}
+        prefix = "repo:ai-platform-portfolio@334196300/"
+        targeted = [credential("old-name-plan", prefix + "renamed@42:environment:central-plan"),
+                    credential("old-name-apply", prefix + "fixture@42:environment:central-apply")]
+        retained = [credential("recreated", prefix + "fixture@43:environment:central-plan"),
+                    credential("other-env", prefix + "fixture@42:environment:other"),
+                    credential("other-issuer", prefix + "fixture@42:environment:central-plan", "https://other.invalid"),
+                    credential("other-org", "repo:other@334196300/fixture@42:environment:central-plan")]
+        remaining = targeted + retained
+        def request(path, method="GET", data=None):
+            if method == "DELETE":
+                remaining[:] = [item for item in remaining if item["name"] != path.rsplit("/", 1)[1]]
+                return None
+            return {"value": list(remaining)}
+        azure = Mock(side_effect=request)
+        with patch.dict(os.environ, {"FEDERATION_IDENTITY_ID": "/identity"}):
+            remove_repository(42, azure)
+            remove_repository(42, azure)
+        self.assertEqual(remaining, retained)
+        self.assertEqual(sum(call.args[1:] == ("DELETE",) for call in azure.call_args_list), 2)
+
+    def test_delete_retries_until_verified_and_rejects_incomplete_inventory(self):
+        from onboarding import remove_repository
+        credential = {"name": "fixture", "properties": {
+            "subject": "repo:ai-platform-portfolio@334196300/fixture@42:environment:central-plan",
+            "issuer": "https://token.actions.githubusercontent.com", "audiences": ["api://AzureADTokenExchange"]}}
+        with patch.dict(os.environ, {"FEDERATION_IDENTITY_ID": "/identity"}):
+            with self.assertRaises(RuntimeError):
+                remove_repository(42, Mock(return_value={"value": [credential]}))
+            azure = Mock(return_value={"value": [], "nextLink": "next"})
+            with self.assertRaises(ValueError):
+                remove_repository(42, azure)
+            self.assertEqual(azure.call_count, 1)
+            for invalid in [True, 0, -1, "42"]:
+                with self.assertRaises(ValueError):
+                    remove_repository(invalid, Mock())

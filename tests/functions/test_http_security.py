@@ -15,7 +15,7 @@ class HttpSecurityTest(unittest.TestCase):
         secret = "fixture-not-a-real-credential"
         signature = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
         handler = function_app.webhook.build().get_user_function()
-        for enabled, header, expected in [("false", signature, "reconcile"), ("true", signature, json.dumps({"repository": "fixture", "id": 42})), ("true", "", None)]:
+        for enabled, header, expected in [("false", signature, "reconcile"), ("true", signature, json.dumps({"repository": "fixture", "id": 42, "action": "created"})), ("true", "", None)]:
             with self.subTest(enabled=enabled, authenticated=bool(header)), \
                     patch.dict(os.environ, {"GITHUB_ORGANIZATION": "ai-platform-portfolio", "GITHUB_INSTALLATION_ID": "1", "AUTO_ENROLL_REPOSITORIES": enabled}), \
                     patch.object(function_app, "secret", return_value=secret):
@@ -52,6 +52,25 @@ class HttpSecurityTest(unittest.TestCase):
                         queue.set.assert_called_once_with("reconcile")
                     else:
                         queue.set.assert_not_called()
+
+    def test_deletion_requires_signed_delivery_and_immutable_owner(self):
+        secret = "fixture-not-a-real-credential"
+        handler = function_app.webhook.build().get_user_function()
+        for owner, signed, expected in [(334196300, True, 202), (334196300, False, 403), (1, True, 403)]:
+            payload = {"organization": {"login": "ai-platform-portfolio"}, "installation": {"id": 1},
+                       "action": "deleted", "repository": {"name": "fixture", "id": 42,
+                       "owner": {"login": "ai-platform-portfolio", "id": owner}}}
+            body = json.dumps(payload).encode()
+            signature = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest() if signed else ""
+            with patch.dict(os.environ, {"GITHUB_ORGANIZATION": "ai-platform-portfolio", "GITHUB_INSTALLATION_ID": "1", "AUTO_ENROLL_REPOSITORIES": "true"}), patch.object(function_app, "secret", return_value=secret):
+                queue = Mock()
+                request = func.HttpRequest(method="POST", url="https://fixture.invalid/api/github", body=body,
+                                          headers={"X-Hub-Signature-256": signature, "X-GitHub-Event": "repository"})
+                self.assertEqual(handler(request, queue).status_code, expected)
+                if expected == 202:
+                    self.assertEqual(json.loads(queue.set.call_args.args[0])["action"], "deleted")
+                else:
+                    queue.set.assert_not_called()
 
 
 if __name__ == "__main__":

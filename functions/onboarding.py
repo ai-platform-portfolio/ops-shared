@@ -61,6 +61,37 @@ def onboard(repository, repository_id, private_key, azure):
             raise RuntimeError("Federated credential verification failed")
 
 
+def remove_repository(repository_id, azure):
+    """Remove only this immutable repository ID's GitHub environment credentials."""
+    if type(repository_id) is not int or repository_id <= 0:
+        raise ValueError("Invalid deleted repository ID")
+    path = os.environ["FEDERATION_IDENTITY_ID"] + "/federatedIdentityCredentials"
+    pattern = re.compile(
+        rf"repo:{ORGANIZATION}@{OWNER_ID}/[A-Za-z0-9_.-]+@{repository_id}:environment:central-(plan|apply)"
+    )
+
+    def matches(item):
+        properties = item["properties"]
+        return (pattern.fullmatch(properties.get("subject", "")) is not None
+                and properties.get("issuer") == "https://token.actions.githubusercontent.com"
+                and properties.get("audiences") == ["api://AzureADTokenExchange"])
+
+    def inventory():
+        result = azure(path)
+        if result.get("nextLink"):
+            raise ValueError("Incomplete federated credential inventory")
+        return result["value"]
+
+    for item in inventory():
+        if matches(item):
+            name = item["name"]
+            if not re.fullmatch(r"[A-Za-z0-9_-]+", name):
+                raise ValueError("Invalid credential name")
+            azure(path + "/" + name, "DELETE")
+    if any(matches(item) for item in inventory()):
+        raise RuntimeError("Repository credential deletion is not complete; retry required")
+
+
 def azure_request(path, method="GET", data=None):
     from azure.identity import ManagedIdentityCredential
     import requests
@@ -70,6 +101,8 @@ def azure_request(path, method="GET", data=None):
     response = requests.request(method, "https://management.azure.com" + path,
                                 params={"api-version": "2023-01-31"}, json=data,
                                 headers={"Authorization": "Bearer " + token}, timeout=30)
+    if method == "DELETE" and (response.ok or response.status_code == 404):
+        return None
     if not response.ok:
         raise RuntimeError(f"Azure federation request failed ({response.status_code})")
     return response.json()

@@ -222,7 +222,7 @@ and commits directly to main; surrounding text stays unchanged.
 
 Apply the companion platform-iac migration **before deploying this Function**.
 It preserves existing credentials while removing them from Terraform state and
-grants only credential read/write on the central identity to the Function.
+grants only credential lifecycle access on the central identity to the Function.
 `FEDERATION_IDENTITY_ID` is injected by Terraform. New credentials keep the
 existing `central-plan`/`central-apply` immutable-ID subjects. This grants trust;
 it does not create GitHub environments or remove their approval requirements.
@@ -238,3 +238,11 @@ Preview with `python3 scripts/repository_settings.py`; apply with
 `python3 scripts/repository_settings.py --apply` using an authenticated GitHub CLI
 with repository administration permission. The script skips archived repositories,
 updates only differing settings, and verifies each write.
+
+Signed `repository.deleted` events also remove that repository's GitHub
+`central-plan` and `central-apply` credentials from the central identity. Cleanup
+matches the immutable organisation and repository IDs, issuer and audience, so a
+renamed repository is cleaned up without touching a recreated repo with the same
+name. Missing credentials are harmless on retry. The public catalogue refreshes
+from GitHub's current inventory. Apply the companion Terraform delete-permission
+change before deploying this handler.
