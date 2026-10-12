@@ -208,3 +208,15 @@ environment must require the `platform` team, forbid administrator bypass and al
 only. GitHub App keys and the webhook secret remain in Key Vault and are read
 using managed identity. Configure the App's Repository events after deployment.
 Existing onboarding requests a platform-iac plan; its .github migration is pending.
+
+## Repository settings
+
+`repository-settings.json` contains **per-repository** GitHub settings.
+Organisation-level settings are not managed by this script and must be documented
+separately when added. All active repositories receive squash-only merging and
+automatic deletion of merged branches.
+
+Preview with `python3 scripts/repository_settings.py`; apply with
+`python3 scripts/repository_settings.py --apply` using an authenticated GitHub CLI
+with repository administration permission. The script skips archived repositories,
+updates only differing settings, and verifies each write.
