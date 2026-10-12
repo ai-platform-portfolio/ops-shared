@@ -22,3 +22,20 @@ class VerifyWebhookTest(TestCase):
         with patch("verify_webhook.urlopen", side_effect=HTTPError("", 404, "", {}, None)):
             with self.assertRaisesRegex(RuntimeError, "unverified"):
                 verify("https://fixture.invalid/api/github", attempts=1)
+
+    def test_binding_errors_fail_deployment_without_disclosing_details(self):
+        import io
+        from verify_webhook import verify_bindings
+        response = MagicMock()
+        response.__enter__.return_value = io.StringIO('{"errors":["fixture confidential diagnostic"]}')
+        with patch("verify_webhook.subprocess.check_output", side_effect=["fixture-key\n", '["fixture/sync_catalogue"]']), patch("verify_webhook.urlopen", return_value=response):
+            with self.assertRaisesRegex(RuntimeError, "binding errors") as error:
+                verify_bindings("https://fixture.invalid/api/github", "fixture", "fixture-rg")
+            self.assertNotIn("confidential", str(error.exception))
+            self.assertNotIn("fixture-key", str(error.exception))
+
+    def test_empty_function_inventory_fails_deployment(self):
+        from verify_webhook import verify_bindings
+        with patch("verify_webhook.subprocess.check_output", side_effect=["fixture-key\n", '[]']):
+            with self.assertRaisesRegex(RuntimeError, "No deployed functions"):
+                verify_bindings("https://fixture.invalid/api/github", "fixture", "fixture-rg")

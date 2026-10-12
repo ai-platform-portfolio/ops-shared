@@ -246,3 +246,7 @@ renamed repository is cleaned up without touching a recreated repo with the same
 name. Missing credentials are harmless on retry. The public catalogue refreshes
 from GitHub's current inventory. Apply the companion Terraform delete-permission
 change before deploying this handler.
+
+Queue triggers and outputs use `WorkQueue`, with an explicit `serviceUri` and
+user-assigned managed identity. Host storage remains on `AzureWebJobsStorage`.
+Apply the matching Terraform settings before deploying this binding change.

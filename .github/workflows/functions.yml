@@ -68,4 +68,4 @@ jobs:
             --query 'properties.defaultHostName || defaultHostName' -o tsv)
           test -n "$host"
           echo "::add-mask::$host"
-          WEBHOOK_URL="https://$host/api/github" python3 scripts/verify_webhook.py
+          FUNCTION_GROUP="$group" WEBHOOK_URL="https://$host/api/github" python3 scripts/verify_webhook.py

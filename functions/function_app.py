@@ -22,7 +22,7 @@ def secret(setting):
 
 
 @app.route(route="github", methods=["POST"], auth_level=func.AuthLevel.ANONYMOUS)
-@app.queue_output(arg_name="work", queue_name="profile-sync", connection="AzureWebJobsStorage")
+@app.queue_output(arg_name="work", queue_name="profile-sync", connection="WorkQueue")
 def webhook(req: func.HttpRequest, work: func.Out[str]) -> func.HttpResponse:
     try:
         accepted = accept_event(
@@ -50,7 +50,7 @@ def webhook(req: func.HttpRequest, work: func.Out[str]) -> func.HttpResponse:
     return func.HttpResponse(status_code=202)
 
 
-@app.queue_trigger(arg_name="work", queue_name="profile-sync", connection="AzureWebJobsStorage")
+@app.queue_trigger(arg_name="work", queue_name="profile-sync", connection="WorkQueue")
 def sync_catalogue(work: func.QueueMessage):
     private_key = secret("GITHUB_APP_PRIVATE_KEY_SECRET")
     github = installation_client(
@@ -74,6 +74,6 @@ def sync_catalogue(work: func.QueueMessage):
 
 
 @app.timer_trigger(arg_name="timer", schedule="0 0 * * * *", use_monitor=True)
-@app.queue_output(arg_name="work", queue_name="profile-sync", connection="AzureWebJobsStorage")
+@app.queue_output(arg_name="work", queue_name="profile-sync", connection="WorkQueue")
 def recover_missed_events(timer: func.TimerRequest, work: func.Out[str]):
     work.set("reconcile")
