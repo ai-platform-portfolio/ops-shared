@@ -13,12 +13,13 @@ def api(path):
 
 
 def verify_environment(environment):
+    # Immutable GitHub ID of ai-platform-portfolio/platform: 19749931.
     reviewers = [rule for rule in environment["protection_rules"] if rule["type"] == "required_reviewers"]
     if (len(reviewers) != 1
-            or [item["reviewer"].get("login") for item in reviewers[0]["reviewers"]] != ["michaelalinks"]
+            or [(item.get("type"), item["reviewer"].get("id")) for item in reviewers[0]["reviewers"]] != [("Team", 19749931)]
             or environment.get("can_admins_bypass") is not False
             or not (environment.get("deployment_branch_policy") or {}).get("custom_branch_policies")):
-        raise ValueError("central-apply must require the owner, forbid bypass and restrict deployment branches")
+        raise ValueError("central-apply must require the platform team, forbid bypass and restrict deployment branches")
 
 
 if __name__ == "__main__":
