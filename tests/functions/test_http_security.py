@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 import azure.functions as func
-from profile_sync import handlers as function_app
+import function_app
 
 
 class HttpSecurityTest(unittest.TestCase):

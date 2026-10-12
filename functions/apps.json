@@ -1,8 +1,0 @@
-{
-  "function_apps": {
-    "operations": {
-      "name": "ai-platform-portfolio-ops",
-      "source": {"path": "functions", "format": "zip"}
-    }
-  }
-}
