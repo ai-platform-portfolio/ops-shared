@@ -7,7 +7,7 @@ from pathlib import Path
 import subprocess
 
 ORGANIZATION = "ai-platform-portfolio"
-SETTINGS_FILE = Path(__file__).resolve().parents[1] / "repository-settings.json"
+SETTINGS_FILE = Path(__file__).resolve().parents[1] / "functions" / "repository-settings.json"
 
 
 def github(path, settings=None):
