@@ -17,4 +17,3 @@ class FunctionDeploymentTest(unittest.TestCase):
                              ("deployment_branch_policy", {}), ("deployment_branch_policy", None)]:
             with self.subTest(field=field), self.assertRaises(ValueError):
                 verify_environment({**protected, field: value})
-
