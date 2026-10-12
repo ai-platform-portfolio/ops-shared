@@ -250,3 +250,10 @@ change before deploying this handler.
 Queue triggers and outputs use `WorkQueue`, with an explicit `serviceUri` and
 user-assigned managed identity. Host storage remains on `AzureWebJobsStorage`.
 Apply the matching Terraform settings before deploying this binding change.
+
+## Agent standards
+
+[agent_standards/shared.md](agent_standards/shared.md) is the canonical shared
+working standard for Codex and Claude. The engineering-standards reconciliation
+script installs it into the managed sections of the user's agent instruction
+files; review changes there before applying them.
