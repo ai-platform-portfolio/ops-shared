@@ -9,13 +9,17 @@ a short-lived installation token scoped to `.github` with Contents write permiss
 Public descriptions are escaped as Markdown text. Existing catalogue markers and
 the current file SHA are mandatory; malformed files fail without writes.
 
+The profile handlers are a Blueprint registered in `../function_app.py`.
+Deploy the complete `functions/` package; see [shared app instructions](../README.md).
+
 ## Code publication
 
 This repository owns `.github/workflows/functions.yml`. After infrastructure is
-applied from terraform-modules, manually dispatch it on main with `application=profile`.
+applied from platform-iac, manually dispatch it on main with `application=operations`.
 The `central-apply` environment requires the owner and main-only deployment with
 administrator bypass disabled. The workflow checks those controls and its real
-OIDC claims against the central Terraform declaration, then authenticates to Azure.
+OIDC claims against the central Terraform declaration, then authenticates to Azure. The GitHub environment enforces approval and branch
+restrictions; the job token does not call admin-only environment-policy APIs.
 Only the existing three Azure identity Secrets are needed here; backend and vault
 resource references remain restricted to terraform-modules.
 

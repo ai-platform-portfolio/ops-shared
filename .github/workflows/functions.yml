@@ -5,7 +5,7 @@ on:
       application:
         description: Key from functions/apps.json
         required: true
-        default: profile
+        default: operations
 permissions:
   contents: read
 jobs:
@@ -47,7 +47,13 @@ jobs:
             -r "$RUNNER_TEMP/function-package/requirements.txt" \
             --target "$RUNNER_TEMP/function-package/.python_packages/lib/site-packages"
           PYTHONPATH="$RUNNER_TEMP/function-package/.python_packages/lib/site-packages:$RUNNER_TEMP/function-package" \
-            python -m unittest discover -s "$SOURCE_PATH/tests" -v
+            python -c 'import function_app; assert function_app.app.get_functions()'
+          for tests in "$SOURCE_PATH"/*/tests; do
+            if [ -d "$tests" ]; then
+              PYTHONPATH="$RUNNER_TEMP/function-package/.python_packages/lib/site-packages:$RUNNER_TEMP/function-package" \
+                python -m unittest discover -s "$tests" -v
+            fi
+          done
           cd "$RUNNER_TEMP/function-package"
           zip -qr "$RUNNER_TEMP/function.zip" .
       - uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6

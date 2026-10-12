@@ -2,9 +2,9 @@ import os
 
 import azure.functions as func
 
-from sync import GitHub, accept_event, installation_client, reconcile, request_onboarding
+from .sync import GitHub, accept_event, installation_client, reconcile, request_onboarding
 
-app = func.FunctionApp()
+app = func.Blueprint()
 
 
 def secret(setting):

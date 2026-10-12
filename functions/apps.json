@@ -1,8 +1,8 @@
 {
   "function_apps": {
-    "profile": {
+    "operations": {
       "name": "ai-platform-portfolio-ops",
-      "source": {"path": "functions/profile_sync", "format": "zip"}
+      "source": {"path": "functions", "format": "zip"}
     }
   }
 }
