@@ -24,6 +24,17 @@ class ProfileSyncTest(unittest.TestCase):
                        (body, signature, "push", secret, "portfolio", 1)]:
             self.assertFalse(accept_event(*change))
 
+    def test_outgoing_repository_ids_are_omitted_from_the_catalogue(self):
+        repositories = [
+            {"id": 1389255291, "name": "outgoing-one", "private": False, "visibility": "public"},
+            {"id": 1389557224, "name": "outgoing-two", "private": False, "visibility": "public"},
+            {"id": 42, "name": "retained", "private": False, "visibility": "public"},
+        ]
+        rendered = catalogue(repositories, "portfolio")
+        self.assertNotIn("outgoing-one", rendered)
+        self.assertNotIn("outgoing-two", rendered)
+        self.assertIn("retained", rendered)
+
     def test_private_repositories_are_excluded_and_public_descriptions_are_text(self):
         repos = [
             {"name": "private-project", "private": True, "visibility": "private", "description": "private text"},

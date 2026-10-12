@@ -5,7 +5,7 @@ own their infrastructure, state, policy and deployment environments. This reposi
 owns shared workflow orchestration and its tests.
 
 Terraform runs directly through the official setup actions and CLI commands.
-Lint and review helpers originate in `engineering-standards`. Workflows are reusable `workflow_call` implementations, not files to copy
+Lint and review helpers live here, including `actions/engineering-checks`. Workflows are reusable `workflow_call` implementations, not files to copy
 into every workload. All consumers pin full commit SHAs.
 
 Run `make test` for helper tests. Live caller runs are required before declaring the
@@ -20,12 +20,11 @@ approval behaviour.
 | `workflow-lint.yml` | PR/main triggers | Actionlint with mandatory ShellCheck |
 | `quality.yml` | Tracked policy, CODEOWNERS and PR trigger | Trusted-base policy, current-head owner adoption, JSON report |
 | `review.yml` | Review trigger and exact original workflow/job names | Rerun the original policy job using trusted code |
-| `governance.yml` | Portfolio contract, audit implementation and schedule in engineering-standards | Execute audit tests and read-only live audit; publish JSON |
+| `governance.yml` | Caller-owned portfolio contract, audit implementation and schedule | Execute audit tests and read-only live audit; publish JSON |
 | `docker.yml` | Dockerfile, image name, optional publication and registry credentials | BuildKit build/cache; SHA-tagged default-branch publication |
 
-Repository-specific tests remain with their repositories. Governance policy and
-the authoritative visibility/protection table remain in engineering-standards.
-The governance workflow expects that repository's audit interface; it is not a
+Repository-specific tests and governance contracts remain caller-owned.
+The governance workflow expects the caller's audit interface; it is not a
 generic command runner. Review automation never checks out PR code with its
 `actions: write` token.
 
@@ -254,6 +253,5 @@ Apply the matching Terraform settings before deploying this binding change.
 ## Agent standards
 
 [agent_standards/shared.md](agent_standards/shared.md) is the canonical shared
-working standard for Codex and Claude. The engineering-standards reconciliation
-script installs it into the managed sections of the user's agent instruction
-files; review changes there before applying them.
+working standard for Codex and Claude. Review changes before incorporating them
+into the agent instruction files you use.
