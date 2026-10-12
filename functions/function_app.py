@@ -7,7 +7,7 @@ import azure.functions as func
 
 from sync import GitHub, accept_event, installation_client, reconcile
 
-from onboarding import onboard, azure_request
+from onboarding import onboard, remove_repository, azure_request
 
 app = func.FunctionApp()
 
@@ -36,9 +36,15 @@ def webhook(req: func.HttpRequest, work: func.Out[str]) -> func.HttpResponse:
         return func.HttpResponse("Invalid webhook", status_code=403)
     onboarding = os.environ.get("AUTO_ENROLL_REPOSITORIES", "false") == "true"
     payload = json.loads(req.get_body())
-    if onboarding and req.headers.get("X-GitHub-Event") == "repository" and payload.get("action") == "created":
+    if onboarding and req.headers.get("X-GitHub-Event") == "repository" and payload.get("action") in {"created", "deleted"}:
         repository = payload["repository"]
-        work.set(json.dumps({"repository": repository["name"], "id": repository["id"]}))
+        if payload["action"] == "deleted":
+            owner = repository.get("owner", {})
+            if (owner.get("login") != "ai-platform-portfolio" or str(owner.get("id")) != "334196300"
+                    or type(repository.get("id")) is not int or repository["id"] <= 0):
+                return func.HttpResponse("Invalid deleted repository", status_code=403)
+        work.set(json.dumps({"repository": repository["name"], "id": repository["id"],
+                             "action": payload["action"]}))
     else:
         work.set("reconcile")
     return func.HttpResponse(status_code=202)
@@ -59,7 +65,12 @@ def sync_catalogue(work: func.QueueMessage):
         if os.environ.get("AUTO_ENROLL_REPOSITORIES", "false") != "true":
             raise ValueError("Repository onboarding is disabled")
         repository = json.loads(message)
-        onboard(repository["repository"], repository["id"], private_key, azure_request)
+        if repository.get("action", "created") == "deleted":
+            remove_repository(repository["id"], azure_request)
+        elif repository.get("action", "created") == "created":
+            onboard(repository["repository"], repository["id"], private_key, azure_request)
+        else:
+            raise ValueError("Unsupported repository action")
 
 
 @app.timer_trigger(arg_name="timer", schedule="0 0 * * * *", use_monitor=True)
