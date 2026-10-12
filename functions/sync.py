@@ -11,6 +11,8 @@ from urllib.request import Request, urlopen
 
 START = "<!-- repositories:start -->"
 END = "<!-- repositories:end -->"
+# Outgoing repositories are omitted while their transfers are pending.
+EXCLUDED_REPOSITORY_IDS = {1389255291, 1389557224}
 
 
 def accept_event(body, signature, event, secret, organization, installation_id):
@@ -32,6 +34,8 @@ def accept_event(body, signature, event, secret, organization, installation_id):
 def catalogue(repositories, organization):
     lines = [START, "| Repository | Purpose |", "| --- | --- |"]
     for repo in sorted(repositories, key=lambda item: item["name"]):
+        if repo.get("id") in EXCLUDED_REPOSITORY_IDS:
+            continue
         if repo.get("visibility") != "public" or repo.get("private") is not False:
             continue
         name = repo["name"]

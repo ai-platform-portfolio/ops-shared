@@ -37,13 +37,28 @@ jobs:
       image: ghcr.io/ai-platform-portfolio/ops-shared-validation
       context: tests/fixtures/container
       dockerfile: tests/fixtures/container/Dockerfile
+  policy-tools:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: ./actions/engineering-checks
+      - name: Validate engineering policy tools
+        working-directory: actions/engineering-checks
+        run: |
+          .venv/bin/ruff check checks
+          .venv/bin/ruff format --check checks
+          .venv/bin/mypy checks
+          .venv/bin/python -m unittest discover -s tests -v
   quality:
     if: always()
-    needs: [lint, helpers, container]
+    needs: [lint, helpers, container, policy-tools]
     runs-on: ubuntu-latest
     steps:
       - env:
           LINT: ${{ needs.lint.result }}
           HELPERS: ${{ needs.helpers.result }}
           CONTAINER: ${{ needs.container.result }}
-        run: test "$LINT" = success && test "$HELPERS" = success && test "$CONTAINER" = success
+          POLICY_TOOLS: ${{ needs.policy-tools.result }}
+        run: test "$LINT" = success && test "$HELPERS" = success && test "$CONTAINER" = success && test "$POLICY_TOOLS" = success

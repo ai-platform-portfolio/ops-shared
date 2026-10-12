@@ -1,0 +1,10 @@
+{
+  "name": "shared-engineering-tools",
+  "private": true,
+  "version": "0.1.0",
+  "dependencies": {
+    "jscpd": "4.0.5",
+    "typescript": "5.8.3",
+    "@biomejs/biome": "1.9.4"
+  }
+}
