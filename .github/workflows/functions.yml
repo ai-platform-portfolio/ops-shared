@@ -35,7 +35,7 @@ jobs:
           package="$RUNNER_TEMP/function-package"
           mkdir "$package"
           cp functions/*.py functions/host.json functions/requirements.txt "$package/"
-          python -m pip install --require-hashes --only-binary=:all: \
+          python -m pip install --only-binary=:all: \
             -r functions/requirements.txt --target "$package/.python_packages/lib/site-packages"
           export PYTHONPATH="$package/.python_packages/lib/site-packages:$package"
           python -c 'import function_app; assert function_app.app.get_functions()'
