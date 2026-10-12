@@ -11,11 +11,11 @@ import function_app
 
 class HttpSecurityTest(unittest.TestCase):
     def test_onboarding_requires_opt_in_and_valid_authentication(self):
-        body = json.dumps({"organization": {"login": "ai-platform-portfolio"}, "installation": {"id": 1}}).encode()
+        body = json.dumps({"organization": {"login": "ai-platform-portfolio"}, "installation": {"id": 1}, "action": "created", "repository": {"name": "fixture", "id": 42}}).encode()
         secret = "fixture-not-a-real-credential"
         signature = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
         handler = function_app.webhook.build().get_user_function()
-        for enabled, header, expected in [("false", signature, "reconcile"), ("true", signature, "onboard"), ("true", "", None)]:
+        for enabled, header, expected in [("false", signature, "reconcile"), ("true", signature, json.dumps({"repository": "fixture", "id": 42})), ("true", "", None)]:
             with self.subTest(enabled=enabled, authenticated=bool(header)), \
                     patch.dict(os.environ, {"GITHUB_ORGANIZATION": "ai-platform-portfolio", "GITHUB_INSTALLATION_ID": "1", "AUTO_ENROLL_REPOSITORIES": enabled}), \
                     patch.object(function_app, "secret", return_value=secret):

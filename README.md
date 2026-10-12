@@ -194,7 +194,8 @@ preserve helper revisions already referenced by workflows.
 
 ## Function App
 
-`functions/` contains only `function_app.py`, `sync.py`, `host.json` and one
+`functions/` contains the handlers, catalogue and onboarding helpers, shared
+repository settings, `host.json` and one
 `requirements.txt` with exact dependency versions. All HTTP, queue and timer
 handlers deploy together. Tests stay in `tests/functions` and are excluded from
 publication.
@@ -207,4 +208,33 @@ that the deployed webhook rejects unsigned requests. The `central-apply`
 environment must require the `platform` team, forbid administrator bypass and allow main
 only. GitHub App keys and the webhook secret remain in Key Vault and are read
 using managed identity. Configure the App's Repository events after deployment.
-Existing onboarding requests a platform-iac plan; its .github migration is pending.
+Signed `repository.created` events enqueue settings and federated credential
+creation directly in the Function. It fetches fresh GitHub metadata, checks the
+immutable organisation and repository IDs, skips archived repositories, and only
+creates Azure trust for public repositories. Existing credentials are reused;
+conflicts and the 20-credential limit fail closed.
+
+The GitHub App needs Administration write and Contents write permissions, all
+repositories selected, and Repository events enabled. The Function requests
+separate tokens scoped to the new repository (administration) and `.github`
+(contents). It updates only the marked catalogue in `.github/profile/README.md`
+and commits directly to main; surrounding text stays unchanged.
+
+Apply the companion platform-iac migration **before deploying this Function**.
+It preserves existing credentials while removing them from Terraform state and
+grants only credential read/write on the central identity to the Function.
+`FEDERATION_IDENTITY_ID` is injected by Terraform. New credentials keep the
+existing `central-plan`/`central-apply` immutable-ID subjects. This grants trust;
+it does not create GitHub environments or remove their approval requirements.
+
+## Repository settings
+
+`functions/repository-settings.json` contains **per-repository** GitHub settings.
+Organisation-level settings are not managed by this script and must be documented
+separately when added. All active repositories receive squash-only merging and
+automatic deletion of merged branches.
+
+Preview with `python3 scripts/repository_settings.py`; apply with
+`python3 scripts/repository_settings.py --apply` using an authenticated GitHub CLI
+with repository administration permission. The script skips archived repositories,
+updates only differing settings, and verifies each write.
