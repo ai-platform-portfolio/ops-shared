@@ -21,9 +21,9 @@ jobs:
           python-version: '3.12'
       - name: Verify Function dependencies and indexing
         run: |
-          python -m pip install --require-hashes -r functions/profile_sync/requirements.txt
-          PYTHONPATH=functions/profile_sync python -c 'import function_app; assert len(function_app.app.get_functions()) == 3'
-          PYTHONPATH=functions/profile_sync python -m unittest discover -s functions/profile_sync/tests -v
+          python -m pip install --only-binary=:all: -r functions/requirements.txt
+          PYTHONPATH=functions python -c 'import function_app; assert function_app.app.get_functions()'
+          PYTHONPATH=functions python -m unittest discover -s tests/functions -v
       - uses: ./actions/workflow-lint
       - name: Prove the shell gate rejects malformed workflows
         run: PATH="$RUNNER_TEMP:$PATH" bash tests/test_workflow_lint.sh

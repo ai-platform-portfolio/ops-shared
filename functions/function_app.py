@@ -1,3 +1,5 @@
+"""All HTTP, queue and timer handlers deploy together in this Function App."""
+
 import os
 
 import azure.functions as func
@@ -40,7 +42,7 @@ def sync_catalogue(work: func.QueueMessage):
     if work.get_body() == b"onboard" and os.environ.get("AUTO_ENROLL_REPOSITORIES", "false") == "true":
         onboarding = installation_client(
             os.environ["GITHUB_APP_ID"], os.environ["GITHUB_INSTALLATION_ID"],
-            private_key, repository="terraform-modules",
+            private_key, repository="platform-iac",
         )
         request_onboarding(os.environ["GITHUB_ORGANIZATION"], onboarding)
     github = installation_client(

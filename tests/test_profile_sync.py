@@ -7,7 +7,7 @@ import sys
 import unittest
 from unittest.mock import MagicMock, patch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "functions/profile_sync"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "functions"))
 from sync import START, END, GitHub, accept_event, catalogue, public_repositories, reconcile, request_onboarding, update_readme
 
 
@@ -15,7 +15,7 @@ class ProfileSyncTest(unittest.TestCase):
     def test_onboarding_dispatch_contains_no_webhook_content_or_apply_request(self):
         github = MagicMock()
         request_onboarding("ai-platform-portfolio", github)
-        github.request.assert_called_once_with("repos/ai-platform-portfolio/terraform-modules/dispatches", "POST", {
+        github.request.assert_called_once_with("repos/ai-platform-portfolio/platform-iac/dispatches", "POST", {
             "event_type": "repository-onboarding",
         })
         with self.assertRaises(ValueError):
