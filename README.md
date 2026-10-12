@@ -199,7 +199,9 @@ preserve helper revisions already referenced by workflows.
 handlers deploy together. Tests stay in `tests/functions` and are excluded from
 publication.
 
-Run **Deploy Function App** from main. The pipeline checks deployment controls,
+**Deploy Function App** starts automatically when Function code, its tests,
+deployment helpers or the deployment workflow change on main. Manual dispatch
+is also available for retries. The pipeline checks deployment controls,
 OIDC and handler indexing, runs the security tests, builds one ZIP and verifies
 that the deployed webhook rejects unsigned requests. The `central-apply`
 environment must require the owner, forbid administrator bypass and allow main

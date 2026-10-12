@@ -1,5 +1,15 @@
 name: Deploy Function App
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'functions/**'
+      - 'tests/functions/**'
+      - 'scripts/verify_function_deployment.py'
+      - 'scripts/verify_webhook.py'
+      - 'scripts/federation_contract.py'
+      - 'scripts/settings.py'
+      - '.github/workflows/functions.yml'
   workflow_dispatch:
 permissions:
   contents: read
