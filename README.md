@@ -204,7 +204,7 @@ deployment helpers or the deployment workflow change on main. Manual dispatch
 is also available for retries. The pipeline checks deployment controls,
 OIDC and handler indexing, runs the security tests, builds one ZIP and verifies
 that the deployed webhook rejects unsigned requests. The `central-apply`
-environment must require the owner, forbid administrator bypass and allow main
+environment must require the `platform` team, forbid administrator bypass and allow main
 only. GitHub App keys and the webhook secret remain in Key Vault and are read
 using managed identity. Configure the App's Repository events after deployment.
 Existing onboarding requests a platform-iac plan; its .github migration is pending.

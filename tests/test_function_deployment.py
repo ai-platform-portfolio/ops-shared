@@ -9,7 +9,7 @@ class FunctionDeploymentTest(unittest.TestCase):
             "can_admins_bypass": False,
             "deployment_branch_policy": {"custom_branch_policies": True},
             "protection_rules": [{"type": "required_reviewers", "reviewers": [
-                {"reviewer": {"login": "michaelalinks"}},
+                {"type": "Team", "reviewer": {"id": 19749931}},
             ]}],
         }
         verify_environment(protected)
@@ -17,3 +17,9 @@ class FunctionDeploymentTest(unittest.TestCase):
                              ("deployment_branch_policy", {}), ("deployment_branch_policy", None)]:
             with self.subTest(field=field), self.assertRaises(ValueError):
                 verify_environment({**protected, field: value})
+        for reviewer in [{"type": "User", "reviewer": {"id": 19749931}},
+                         {"type": "Team", "reviewer": {"id": 1}}]:
+            with self.subTest(reviewer=reviewer), self.assertRaises(ValueError):
+                verify_environment({**protected, "protection_rules": [
+                    {"type": "required_reviewers", "reviewers": [reviewer]},
+                ]})
