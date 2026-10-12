@@ -64,6 +64,8 @@ jobs:
           echo "::add-mask::$group"
           az functionapp deployment source config-zip --name "$FUNCTION_NAME" \
             --resource-group "$group" --src "$RUNNER_TEMP/function.zip" --build-remote false --output none
-          host=$(az functionapp show --name "$FUNCTION_NAME" --resource-group "$group" --query defaultHostName -o tsv)
+          host=$(az functionapp show --name "$FUNCTION_NAME" --resource-group "$group" \
+            --query 'properties.defaultHostName || defaultHostName' -o tsv)
+          test -n "$host"
           echo "::add-mask::$host"
           WEBHOOK_URL="https://$host/api/github" python3 scripts/verify_webhook.py
