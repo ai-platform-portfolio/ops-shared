@@ -1,0 +1,4 @@
+apiVersion: v2
+name: shared-workflow-fixture
+version: 0.1.0
+type: application
