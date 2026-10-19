@@ -27,6 +27,9 @@ jobs:
 ```
 
 The Linear workflow requires a `pull_request` event and both OAuth secrets.
+It fetches `scripts/linear_issue.py` from this repository at a pinned commit and
+runs it against the caller's PR metadata. When changing the script, update the
+workflow's checkout pin to a commit containing that change.
 `terraform-directories` is a nonempty JSON array of caller-relative directories.
 
 For Helm rendering, also supply `helm-chart`, `helm-chart-version`, and optionally
