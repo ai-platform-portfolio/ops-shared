@@ -1,0 +1,29 @@
+name: Linear issue check
+on:
+  workflow_call:
+    secrets:
+      LINEAR_CLIENT_ID:
+        required: true
+      LINEAR_CLIENT_SECRET:
+        required: true
+permissions:
+  contents: read
+jobs:
+  linear-issue-required:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Fetch shared validator
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ai-platform-portfolio/ops-shared
+          ref: 6c854b9d3c6197e7e1431fce8274f66917bae58b
+          path: ops-shared
+          sparse-checkout: scripts/linear_issue.py
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Validate branch issues using read-only OAuth
+        env:
+          LINEAR_CLIENT_ID: ${{ secrets.LINEAR_CLIENT_ID }}
+          LINEAR_CLIENT_SECRET: ${{ secrets.LINEAR_CLIENT_SECRET }}
+        run: python3 ops-shared/scripts/linear_issue.py

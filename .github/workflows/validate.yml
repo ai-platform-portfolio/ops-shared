@@ -1,0 +1,102 @@
+name: Validate Terraform and Helm
+on:
+  workflow_call:
+    inputs:
+      terraform-directories:
+        description: JSON array of caller-relative Terraform root or module directories.
+        required: true
+        type: string
+      terraform-version:
+        description: Terraform CLI version.
+        type: string
+        default: '1.5.7'
+      helm-chart:
+        description: Optional local chart path, chart name or OCI reference; empty skips Helm.
+        type: string
+        default: ''
+      helm-repository:
+        description: Optional chart repository URL.
+        type: string
+        default: ''
+      helm-chart-version:
+        description: Pinned chart version; required for a remote Helm chart.
+        type: string
+        default: ''
+      helm-version:
+        description: Helm CLI version.
+        type: string
+        default: v3.17.3
+      helm-release:
+        description: Rendered Helm release name.
+        type: string
+        default: validation
+      helm-namespace:
+        description: Rendered Helm namespace.
+        type: string
+        default: default
+      helm-values-file:
+        description: Optional caller-relative values file path.
+        type: string
+        default: ''
+permissions:
+  contents: read
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ inputs.terraform-version }}
+      - run: terraform fmt -check -recursive .
+  terraform:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        directory: ${{ fromJSON(inputs.terraform-directories) }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ inputs.terraform-version }}
+      - run: terraform init -backend=false -input=false
+        working-directory: ${{ matrix.directory }}
+      - run: terraform validate
+        working-directory: ${{ matrix.directory }}
+  helm:
+    if: inputs.helm-chart != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: azure/setup-helm@v4.3.0
+        with:
+          version: ${{ inputs.helm-version }}
+      - name: Render chart
+        shell: bash
+        env:
+          CHART: ${{ inputs.helm-chart }}
+          REPOSITORY: ${{ inputs.helm-repository }}
+          CHART_VERSION: ${{ inputs.helm-chart-version }}
+          RELEASE: ${{ inputs.helm-release }}
+          NAMESPACE: ${{ inputs.helm-namespace }}
+          VALUES_FILE: ${{ inputs.helm-values-file }}
+        run: |
+          if [[ ! -d "$CHART" && -z "$CHART_VERSION" ]]; then
+            echo 'A pinned helm-chart-version is required for remote charts.' >&2
+            exit 1
+          fi
+          args=(template "$RELEASE" "$CHART" --namespace "$NAMESPACE")
+          if [[ -n "$REPOSITORY" ]]; then args+=(--repo "$REPOSITORY"); fi
+          if [[ -n "$CHART_VERSION" ]]; then args+=(--version "$CHART_VERSION"); fi
+          if [[ -n "$VALUES_FILE" ]]; then args+=(--values "$VALUES_FILE"); fi
+          helm "${args[@]}" > "$RUNNER_TEMP/helm-rendered.yaml"
