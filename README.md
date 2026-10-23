@@ -19,6 +19,7 @@ jobs:
     secrets:
       LINEAR_CLIENT_ID: ${{ secrets.LINEAR_CLIENT_ID }}
       LINEAR_CLIENT_SECRET: ${{ secrets.LINEAR_CLIENT_SECRET }}
+
   validate:
     uses: ai-platform-portfolio/ops-shared/.github/workflows/validate.yml@<merged-commit-sha>
     with:
@@ -30,6 +31,7 @@ The Linear workflow requires a `pull_request` event and both OAuth secrets.
 It fetches `scripts/linear_issue.py` from this repository at a pinned commit and
 runs it against the caller's PR metadata. When changing the script, update the
 workflow's checkout pin to a commit containing that change.
+
 `terraform-directories` is a nonempty JSON array of caller-relative directories.
 
 For Helm rendering, also supply `helm-chart`, `helm-chart-version`, and optionally
