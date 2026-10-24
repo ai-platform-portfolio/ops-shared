@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       terraform-directories:
-        description: JSON array of caller-relative Terraform root or module directories.
+        description: JSON array of caller-relative Terraform directories or glob patterns.
         required: true
         type: string
 
@@ -52,6 +52,42 @@ permissions:
   contents: read
 
 jobs:
+  discover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    outputs:
+      directories: ${{ steps.directories.outputs.directories }}
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - id: directories
+        name: Expand Terraform directory patterns
+        env:
+          TERRAFORM_DIRECTORIES: ${{ inputs.terraform-directories }}
+        run: |
+          python3 - <<'PYTHON' >> "$GITHUB_OUTPUT"
+          import json
+          import os
+          from pathlib import Path
+
+          patterns = json.loads(os.environ['TERRAFORM_DIRECTORIES'])
+          if not isinstance(patterns, list) or not patterns or not all(isinstance(p, str) and p for p in patterns):
+              raise SystemExit('terraform-directories must be a nonempty JSON array of directory paths or glob patterns')
+
+          directories = set()
+          for pattern in patterns:
+              matches = {str(path) for path in Path('.').glob(pattern) if path.is_dir()
+                         and (any(path.glob('*.tf')) or any(path.glob('*.tf.json')))}
+              if not matches:
+                  raise SystemExit(f'No Terraform directories matched {pattern!r}')
+              directories.update(matches)
+          print('directories=' + json.dumps(sorted(directories)))
+          PYTHON
+
   format:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -68,13 +104,14 @@ jobs:
       - run: terraform fmt -check -recursive .
 
   terraform:
+    needs: discover
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
     strategy:
       fail-fast: false
       matrix:
-        directory: ${{ fromJSON(inputs.terraform-directories) }}
+        directory: ${{ fromJSON(needs.discover.outputs.directories) }}
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
