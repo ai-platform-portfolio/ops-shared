@@ -32,13 +32,11 @@ It fetches `scripts/linear_issue.py` from this repository at a pinned commit and
 runs it against the caller's PR metadata. When changing the script, update the
 workflow's checkout pin to a commit containing that change.
 
-`terraform-directories` is a nonempty JSON array of caller-relative directories
-or glob patterns. Use `["modules/*/*"]` to include every provider's modules, or
-`["bootstrap"]` for a deployment root. The shared workflow expands patterns after
-checking out the caller, selects directories containing `.tf` or `.tf.json` files,
-and validates each directory in a separate matrix job. Matches are deduplicated;
-a pattern matching no Terraform directories fails before validation. Callers do
-not need their own discovery jobs or a maintained module list.
+`terraform-directories` is a nonempty JSON array of caller-relative paths or glob
+patterns, such as `["bootstrap"]` or `["modules/*/*"]`. Each matrix job expands
+its pattern and loops through matching directories, running backend-disabled init
+and validate. Non-directory matches are ignored; no matching directories fails
+the job.
 
 For Helm rendering, also supply `helm-chart`, `helm-chart-version`, and optionally
 `helm-repository`, `helm-release`, `helm-namespace`, `helm-values-file`, and
