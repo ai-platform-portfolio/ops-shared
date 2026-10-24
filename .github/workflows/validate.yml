@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       terraform-directories:
-        description: JSON array of caller-relative Terraform root or module directories.
+        description: JSON array of caller-relative Terraform directories or glob patterns.
         required: true
         type: string
 
@@ -85,11 +85,24 @@ jobs:
         with:
           terraform_version: ${{ inputs.terraform-version }}
 
-      - run: terraform init -backend=false -input=false
-        working-directory: ${{ matrix.directory }}
+      - name: Validate Terraform directories
+        shell: bash
+        env:
+          DIRECTORY_PATTERN: ${{ matrix.directory }}
+        run: |
+          matched=false
+          while IFS= read -r directory; do
+            [[ -d "$directory" ]] || continue
+            matched=true
+            echo "Validating $directory"
+            terraform -chdir="$directory" init -backend=false -input=false
+            terraform -chdir="$directory" validate
+          done < <(compgen -G "$DIRECTORY_PATTERN")
 
-      - run: terraform validate
-        working-directory: ${{ matrix.directory }}
+          if [[ "$matched" != true ]]; then
+            echo "No directories matched $DIRECTORY_PATTERN" >&2
+            exit 1
+          fi
 
   helm:
     if: inputs.helm-chart != ''

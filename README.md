@@ -23,7 +23,7 @@ jobs:
   validate:
     uses: ai-platform-portfolio/ops-shared/.github/workflows/validate.yml@<merged-commit-sha>
     with:
-      terraform-directories: '["modules/azure/network", "modules/azure/aks-cluster"]'
+      terraform-directories: '["modules/*/*"]'
       terraform-version: '1.5.7'
 ```
 
@@ -32,7 +32,11 @@ It fetches `scripts/linear_issue.py` from this repository at a pinned commit and
 runs it against the caller's PR metadata. When changing the script, update the
 workflow's checkout pin to a commit containing that change.
 
-`terraform-directories` is a nonempty JSON array of caller-relative directories.
+`terraform-directories` is a nonempty JSON array of caller-relative paths or glob
+patterns, such as `["bootstrap"]` or `["modules/*/*"]`. Each matrix job expands
+its pattern and loops through matching directories, running backend-disabled init
+and validate. Non-directory matches are ignored; no matching directories fails
+the job.
 
 For Helm rendering, also supply `helm-chart`, `helm-chart-version`, and optionally
 `helm-repository`, `helm-release`, `helm-namespace`, `helm-values-file`, and
