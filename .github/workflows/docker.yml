@@ -42,17 +42,21 @@ jobs:
 
       - uses: docker/setup-buildx-action@v4
 
-      - name: Generate image tags
-        id: meta
-        uses: docker/metadata-action@v6
-        with:
-          images: localacrk8s.azurecr.io/${{ inputs.image }}
-          tags: |
-            type=ref,event=branch
-            type=ref,event=pr
-            type=ref,event=tag
-            type=sha,format=long
-            type=raw,value=latest,enable=${{ env.PUBLISH == 'true' }}
+      - name: Generate image tag
+        id: image-tag
+        shell: bash
+        env:
+          IMAGE: ${{ inputs.image }}
+        run: |
+          if [[ ! "$IMAGE" =~ ^[a-z0-9][a-z0-9._-]*(/[a-z0-9][a-z0-9._-]*)*$ ]]; then
+            echo 'image must be a lowercase ACR repository path without a tag' >&2
+            exit 1
+          fi
+
+          service_name=${IMAGE##*/}
+          timestamp=$(date -u +'%Y%m%dT%H%M%SZ')
+          short_sha=${GITHUB_SHA:0:12}
+          echo "tag=localacrk8s.azurecr.io/${IMAGE}:${service_name}_${timestamp}_${short_sha}" >> "$GITHUB_OUTPUT"
 
       - name: Log in to Azure
         if: env.PUBLISH == 'true'
@@ -70,7 +74,9 @@ jobs:
           context: ${{ inputs.context }}
           file: ${{ inputs.file }}
           push: ${{ env.PUBLISH == 'true' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ steps.image-tag.outputs.tag }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
           cache-from: type=gha,scope=${{ inputs.image }}
           cache-to: type=gha,scope=${{ inputs.image }},mode=max

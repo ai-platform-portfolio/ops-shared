@@ -47,8 +47,9 @@ pinned chart version. Input defaults are declared in the callable workflow.
 ## Docker images
 
 Call `docker.yml` once per image. The caller supplies a repository path within
-`localacrk8s.azurecr.io` without a tag. `context` defaults to the repository
-root, and `file` defaults to the Dockerfile in that context. A pull request
+`localacrk8s.azurecr.io` without a tag. The last path segment becomes the
+service name in the tag. `context` defaults to the repository root, and `file`
+defaults to the Dockerfile in that context. A pull request
 builds without publishing. A push to `main` publishes, including a merge to
 `main`; a manual dispatch on `main` is the fallback publish path. Manual runs
 from other branches build without publishing. The reusable workflow enforces
@@ -118,6 +119,7 @@ belongs in the caller workflow, which provides the application source.
 Buildx imports and exports all build stages through the GitHub Actions cache.
 Each image has its own cache scope, so matrix builds do not overwrite one
 another. GitHub's cache branch access and storage limits still apply. The
-workflow emits a full commit SHA tag on every build, plus a branch or PR tag;
-published `main` builds also get `latest`. Use a `.dockerignore` in each build
-context to keep irrelevant files out of the build.
+workflow tags each build as `{service_name}_{UTC datetime}_{12-character SHA}`,
+for example `api_20261029T202500Z_a1b2c3d4e5f6`. Each build gets one tag;
+published `main` builds use the same format. Use a `.dockerignore` in each
+build context to keep irrelevant files out of the build.
