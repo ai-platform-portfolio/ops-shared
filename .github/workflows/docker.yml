@@ -1,0 +1,93 @@
+name: Build Docker image
+
+on:
+  workflow_call:
+    inputs:
+      image:
+        description: Repository path in localacrk8s without a tag (for example portfolio/api).
+        required: true
+        type: string
+
+      context:
+        description: Caller-relative build context.
+        type: string
+        default: .
+
+      file:
+        description: Caller-relative Dockerfile path; defaults to the context's Dockerfile.
+        type: string
+        default: ''
+
+    secrets:
+      AZURE_CREDENTIALS:
+        description: Azure service principal JSON with push access to localacrk8s.
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      AZURE_CORE_OUTPUT: none
+      PUBLISH: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+
+    steps:
+      - name: Require Azure credentials for publishing
+        if: env.PUBLISH == 'true'
+        shell: bash
+        env:
+          AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+        run: |
+          if [[ -z "$AZURE_CREDENTIALS" ]]; then
+            echo '::error::AZURE_CREDENTIALS is required to publish to ACR.'
+            exit 1
+          fi
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Generate image tag
+        id: image-tag
+        shell: bash
+        env:
+          IMAGE: ${{ inputs.image }}
+        run: |
+          if [[ ! "$IMAGE" =~ ^[a-z0-9][a-z0-9._-]*(/[a-z0-9][a-z0-9._-]*)*$ ]]; then
+            echo 'image must be a lowercase ACR repository path without a tag' >&2
+            exit 1
+          fi
+
+          service_name=${IMAGE##*/}
+          timestamp=$(date -u +'%Y%m%dT%H%M%SZ')
+          short_sha=${GITHUB_SHA:0:12}
+          echo "tag=localacrk8s.azurecr.io/${IMAGE}:${service_name}_${timestamp}_${short_sha}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to Azure
+        if: env.PUBLISH == 'true'
+        uses: azure/login@v3
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Log in to ACR
+        if: env.PUBLISH == 'true'
+        run: az acr login --name localacrk8s
+
+      - name: Build and optionally push
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ inputs.context }}
+          file: ${{ inputs.file }}
+          push: ${{ env.PUBLISH == 'true' }}
+          tags: ${{ steps.image-tag.outputs.tag }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=${{ inputs.image }}
+          cache-to: type=gha,scope=${{ inputs.image }},mode=max
