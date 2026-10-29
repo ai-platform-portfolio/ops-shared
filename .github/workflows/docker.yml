@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       image:
-        description: Full GHCR image name without a tag (for example ghcr.io/org/app).
+        description: Repository path in localacrk8s without a tag (for example portfolio/api).
         required: true
         type: string
 
@@ -18,19 +18,22 @@ on:
         type: string
         default: ''
 
-      push:
-        description: Push on non-PR events; otherwise build only.
-        type: boolean
-        default: false
+    secrets:
+      AZURE_CREDENTIALS:
+        description: Azure service principal JSON with push access to localacrk8s.
+        required: false
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
   docker:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+
+    env:
+      AZURE_CORE_OUTPUT: none
+      PUBLISH: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -43,28 +46,30 @@ jobs:
         id: meta
         uses: docker/metadata-action@v6
         with:
-          images: ${{ inputs.image }}
+          images: localacrk8s.azurecr.io/${{ inputs.image }}
           tags: |
             type=ref,event=branch
             type=ref,event=pr
             type=ref,event=tag
             type=sha,format=long
-            type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+            type=raw,value=latest,enable=${{ env.PUBLISH == 'true' }}
 
-      - name: Log in to GHCR
-        if: inputs.push && !startsWith(github.event_name, 'pull_request')
-        uses: docker/login-action@v4
+      - name: Log in to Azure
+        if: env.PUBLISH == 'true'
+        uses: azure/login@v3
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Log in to ACR
+        if: env.PUBLISH == 'true'
+        run: az acr login --name localacrk8s
 
       - name: Build and optionally push
         uses: docker/build-push-action@v7
         with:
           context: ${{ inputs.context }}
           file: ${{ inputs.file }}
-          push: ${{ inputs.push && !startsWith(github.event_name, 'pull_request') }}
+          push: ${{ env.PUBLISH == 'true' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ inputs.image }}

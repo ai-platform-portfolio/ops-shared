@@ -6,7 +6,7 @@ Reusable GitHub Actions workflow templates. Callers choose their events and inpu
 | --- | --- |
 | `.github/workflows/linear-issue-check.yml` | Validate PR branch issue IDs through Linear read-only OAuth |
 | `.github/workflows/validate.yml` | Terraform formatting and validation, with optional Helm rendering |
-| `.github/workflows/docker.yml` | Build or publish a GHCR image with image-scoped BuildKit caching |
+| `.github/workflows/docker.yml` | Build or publish to the platform ACR with image-scoped BuildKit caching |
 
 ## Usage
 
@@ -46,47 +46,57 @@ pinned chart version. Input defaults are declared in the callable workflow.
 
 ## Docker images
 
-Call `docker.yml` once per image. The caller supplies a full GHCR image name
-without a tag. `context` defaults to the repository root, and `file` defaults
-to the Dockerfile in that context. On pull requests it builds without pushing;
-set `push: true` to publish on other events. The caller must grant
-`contents: read` and `packages: write` to the job when publishing.
+Call `docker.yml` once per image. The caller supplies a repository path within
+`localacrk8s.azurecr.io` without a tag. `context` defaults to the repository
+root, and `file` defaults to the Dockerfile in that context. A pull request
+builds without publishing. A push to `main` publishes, including a merge to
+`main`; a manual dispatch on `main` is the fallback publish path. Manual runs
+from other branches build without publishing. The reusable workflow enforces
+this rule, so callers do not need a `push` input.
 
 For one image in a monorepo:
 
 ```yaml
+name: Docker
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
 jobs:
   api:
     permissions:
       contents: read
-      packages: write
 
     uses: ai-platform-portfolio/ops-shared/.github/workflows/docker.yml@<merged-commit-sha>
     with:
-      image: ghcr.io/ai-platform-portfolio/api
+      image: portfolio/api
       context: .
       file: services/api/Dockerfile
-      push: ${{ github.event_name == 'push' }}
+
+    secrets:
+      AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
 ```
 
-For several images, put the same call under a matrix:
+For several images, replace the `jobs` block with a matrix:
 
 ```yaml
 jobs:
   images:
     permissions:
       contents: read
-      packages: write
 
     strategy:
       fail-fast: false
       matrix:
         include:
-          - image: ghcr.io/ai-platform-portfolio/api
+          - image: portfolio/api
             context: .
             file: services/api/Dockerfile
 
-          - image: ghcr.io/ai-platform-portfolio/worker
+          - image: portfolio/worker
             context: .
             file: services/worker/Dockerfile
 
@@ -95,12 +105,19 @@ jobs:
       image: ${{ matrix.image }}
       context: ${{ matrix.context }}
       file: ${{ matrix.file }}
-      push: ${{ github.event_name == 'push' }}
+
+    secrets:
+      AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
 ```
+
+The organization secret `AZURE_CREDENTIALS` must be available to each caller
+repository and contain Azure service principal JSON authorized to push to
+`localacrk8s`. It is only used on publishing runs. The manual dispatch trigger
+belongs in the caller workflow, which provides the application source.
 
 Buildx imports and exports all build stages through the GitHub Actions cache.
 Each image has its own cache scope, so matrix builds do not overwrite one
 another. GitHub's cache branch access and storage limits still apply. The
 workflow emits a full commit SHA tag on every build, plus a branch or PR tag;
-the default branch also gets `latest`. Use a `.dockerignore` in each build
+published `main` builds also get `latest`. Use a `.dockerignore` in each build
 context to keep irrelevant files out of the build.
