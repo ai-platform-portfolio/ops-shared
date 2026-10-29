@@ -18,6 +18,25 @@ on:
         type: string
         default: ''
 
+      tag:
+        description: Optional Docker tag; defaults to service name, UTC time and commit SHA.
+        type: string
+        default: ''
+
+      publish-preview:
+        description: Publish images for same-repository pull requests when credentials are supplied.
+        type: boolean
+        default: false
+
+    outputs:
+      image:
+        description: Full image reference with tag.
+        value: ${{ jobs.docker.outputs.image }}
+
+      digest:
+        description: Published image digest; empty for build-only runs.
+        value: ${{ jobs.docker.outputs.digest }}
+
     secrets:
       AZURE_CREDENTIALS:
         description: Azure service principal JSON with push access to localacrk8s.
@@ -31,9 +50,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
+    outputs:
+      image: ${{ steps.image-tag.outputs.image }}
+      digest: ${{ steps.build.outputs.digest }}
+
     env:
       AZURE_CORE_OUTPUT: none
-      PUBLISH: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+      PUBLISH: ${{ (github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')) || (inputs['publish-preview'] && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) }}
 
     steps:
       - name: Require Azure credentials for publishing
@@ -58,16 +81,32 @@ jobs:
         shell: bash
         env:
           IMAGE: ${{ inputs.image }}
+          EXPLICIT_TAG: ${{ inputs.tag }}
         run: |
           if [[ ! "$IMAGE" =~ ^[a-z0-9][a-z0-9._-]*(/[a-z0-9][a-z0-9._-]*)*$ ]]; then
             echo 'image must be a lowercase ACR repository path without a tag' >&2
             exit 1
           fi
 
-          service_name=${IMAGE##*/}
-          timestamp=$(date -u +'%Y%m%dT%H%M%SZ')
-          short_sha=${GITHUB_SHA:0:12}
-          echo "tag=localacrk8s.azurecr.io/${IMAGE}:${service_name}_${timestamp}_${short_sha}" >> "$GITHUB_OUTPUT"
+          if [[ -n "$EXPLICIT_TAG" ]]; then
+            if [[ ! "$EXPLICIT_TAG" =~ ^[a-z0-9_][a-z0-9_.-]{0,127}$ ]]; then
+              echo 'tag must be a lowercase Docker tag without a registry or repository' >&2
+              exit 1
+            fi
+            tag=$EXPLICIT_TAG
+          else
+            service_name=${IMAGE##*/}
+            timestamp=$(date -u +'%Y%m%dT%H%M%SZ')
+            short_sha=${GITHUB_SHA:0:12}
+            tag=${service_name}_${timestamp}_${short_sha}
+          fi
+
+          if [[ "$GITHUB_EVENT_NAME" == pull_request && "$PUBLISH" == true && "$tag" != preview-* ]]; then
+            echo 'published PR images must use a preview- tag' >&2
+            exit 1
+          fi
+
+          echo "image=localacrk8s.azurecr.io/${IMAGE}:${tag}" >> "$GITHUB_OUTPUT"
 
       - name: Log in to Azure
         if: env.PUBLISH == 'true'
@@ -80,12 +119,13 @@ jobs:
         run: az acr login --name localacrk8s
 
       - name: Build and optionally push
+        id: build
         uses: docker/build-push-action@v7
         with:
           context: ${{ inputs.context }}
           file: ${{ inputs.file }}
           push: ${{ env.PUBLISH == 'true' }}
-          tags: ${{ steps.image-tag.outputs.tag }}
+          tags: ${{ steps.image-tag.outputs.image }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}

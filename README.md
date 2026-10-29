@@ -50,10 +50,13 @@ Call `docker.yml` once per image. The caller supplies a repository path within
 `localacrk8s.azurecr.io` without a tag. The last path segment becomes the
 service name in the tag. `context` defaults to the repository root, and `file`
 defaults to the Dockerfile in that context. A pull request
-builds without publishing. A push to `main` publishes, including a merge to
-`main`; a manual dispatch on `main` is the fallback publish path. Manual runs
+builds without publishing unless `publish-preview: true` is set for a
+same-repository PR. Fork PRs remain build-only. A push to `main` publishes,
+including a merge to `main`; a manual dispatch on `main` is the fallback publish path. Manual runs
 from other branches build without publishing. The reusable workflow enforces
-this rule, so callers do not need a `push` input.
+this rule. The optional `tag` input replaces the generated tag; pass only the
+tag, not a full image reference. The workflow returns `image` and `digest`
+outputs. `digest` is empty on build-only runs.
 
 For one image in a monorepo:
 
@@ -113,14 +116,29 @@ jobs:
 
 The organization secret `AZURE_CREDENTIALS` must be available to each caller
 repository and contain Azure service principal JSON authorized to push to
-`localacrk8s`. It is required for publishing runs and optional for PR builds;
+`localacrk8s`. It is required for publishing runs and optional for build-only PRs;
 the workflow fails early if a publish run has no credential. The manual dispatch
 trigger belongs in the caller workflow, which provides the application source.
+
+For a PR preview, opt in explicitly and tag the PR head commit. The caller must
+trust same-repository PR authors with access to its publishing credential:
+
+```yaml
+with:
+  image: portfolio/api
+  tag: preview-pr-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+  publish-preview: true
+```
+
+Published PR images must use a `preview-` tag. Use the deterministic tag in an
+ApplicationSet PR generator, then use the published digest for reviewed
+environment promotions. ACR retention can remove `preview-*` tags after their
+PRs close.
 
 Buildx imports and exports all build stages through the GitHub Actions cache.
 Each image has its own cache scope, so matrix builds do not overwrite one
 another. GitHub's cache branch access and storage limits still apply. The
 workflow tags each build as `{service_name}_{UTC datetime}_{12-character SHA}`,
 for example `api_20261029T202500Z_a1b2c3d4e5f6`. Each build gets one tag;
-published `main` builds use the same format. Use a `.dockerignore` in each
-build context to keep irrelevant files out of the build.
+published `main` builds use the same format unless `tag` is supplied. Use a
+`.dockerignore` in each build context to keep irrelevant files out of the build.
