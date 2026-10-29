@@ -113,8 +113,9 @@ jobs:
 
 The organization secret `AZURE_CREDENTIALS` must be available to each caller
 repository and contain Azure service principal JSON authorized to push to
-`localacrk8s`. It is only used on publishing runs. The manual dispatch trigger
-belongs in the caller workflow, which provides the application source.
+`localacrk8s`. It is required for publishing runs and optional for PR builds;
+the workflow fails early if a publish run has no credential. The manual dispatch
+trigger belongs in the caller workflow, which provides the application source.
 
 Buildx imports and exports all build stages through the GitHub Actions cache.
 Each image has its own cache scope, so matrix builds do not overwrite one

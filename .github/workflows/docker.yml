@@ -36,6 +36,17 @@ jobs:
       PUBLISH: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
 
     steps:
+      - name: Require Azure credentials for publishing
+        if: env.PUBLISH == 'true'
+        shell: bash
+        env:
+          AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+        run: |
+          if [[ -z "$AZURE_CREDENTIALS" ]]; then
+            echo '::error::AZURE_CREDENTIALS is required to publish to ACR.'
+            exit 1
+          fi
+
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
