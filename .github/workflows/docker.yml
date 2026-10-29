@@ -52,7 +52,7 @@ jobs:
             type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
 
       - name: Log in to GHCR
-        if: inputs.push && github.event_name != 'pull_request'
+        if: inputs.push && !startsWith(github.event_name, 'pull_request')
         uses: docker/login-action@v4
         with:
           registry: ghcr.io
@@ -64,7 +64,7 @@ jobs:
         with:
           context: ${{ inputs.context }}
           file: ${{ inputs.file }}
-          push: ${{ inputs.push && github.event_name != 'pull_request' }}
+          push: ${{ inputs.push && !startsWith(github.event_name, 'pull_request') }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ inputs.image }}
