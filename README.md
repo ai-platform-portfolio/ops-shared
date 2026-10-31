@@ -55,8 +55,22 @@ same-repository PR. Fork PRs remain build-only. A push to `main` publishes,
 including a merge to `main`; a manual dispatch on `main` is the fallback publish path. Manual runs
 from other branches build without publishing. The reusable workflow enforces
 this rule. The optional `tag` input replaces the generated tag; pass only the
-tag, not a full image reference. The workflow returns `image` and `digest`
-outputs. `digest` is empty on build-only runs.
+tag, not a full image reference. The workflow returns `image`, `digest` and
+`revision` outputs. `digest` is empty on build-only runs; `revision` is the full
+source commit SHA verified before building.
+
+The optional `revision` input selects a full 40-character lowercase commit SHA.
+When omitted or empty, it uses the event's `github.sha`, preserving the existing
+behavior: PR builds use GitHub's synthetic merge commit, while push and manual
+runs use their event commit. Branch names, tags and abbreviated SHAs are not
+accepted as revision inputs.
+
+Preview callers explicitly pass `github.event.pull_request.head.sha` to build the
+reviewed PR source. Checkout must match the selected SHA before any registry login
+or build; generated tags, the OCI revision label and the `revision` output all
+identify that commit. An explicit image tag does not select the source revision.
+Consumers must still reject stale runs before deployment.
+See [GitHub's checkout guidance](https://github.com/actions/checkout#checkout-pull-request-head-commit-instead-of-merge-commit).
 
 For one image in a monorepo:
 
@@ -126,6 +140,7 @@ trust same-repository PR authors with access to its publishing credential:
 ```yaml
 with:
   image: portfolio/api
+  revision: ${{ github.event.pull_request.head.sha }}
   tag: preview-pr-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
   publish-preview: true
 ```
