@@ -59,13 +59,17 @@ tag, not a full image reference. The workflow returns `image`, `digest` and
 `revision` outputs. `digest` is empty on build-only runs; `revision` is the full
 source commit SHA verified before building.
 
-For `pull_request` events, the workflow explicitly checks out the event's
-`pull_request.head.sha`. Generated tags and the OCI revision label identify that
-same commit. This keeps preview images aligned with the application's reviewed
-source instead of GitHub's synthetic merge commit. Push and manual-dispatch builds
-use the event's `github.sha`. Checkout must match the selected SHA before any
-registry login or build. The SHA is fixed to the triggering event; a newer push
-requires a new run. Consumers must still reject stale runs before deployment.
+The optional `revision` input selects a full 40-character lowercase commit SHA.
+When omitted or empty, it uses the event's `github.sha`, preserving the existing
+behavior: PR builds use GitHub's synthetic merge commit, while push and manual
+runs use their event commit. Branch names, tags and abbreviated SHAs are not
+accepted as revision inputs.
+
+Preview callers explicitly pass `github.event.pull_request.head.sha` to build the
+reviewed PR source. Checkout must match the selected SHA before any registry login
+or build; generated tags, the OCI revision label and the `revision` output all
+identify that commit. An explicit image tag does not select the source revision.
+Consumers must still reject stale runs before deployment.
 See [GitHub's checkout guidance](https://github.com/actions/checkout#checkout-pull-request-head-commit-instead-of-merge-commit).
 
 For one image in a monorepo:
@@ -136,6 +140,7 @@ trust same-repository PR authors with access to its publishing credential:
 ```yaml
 with:
   image: portfolio/api
+  revision: ${{ github.event.pull_request.head.sha }}
   tag: preview-pr-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
   publish-preview: true
 ```

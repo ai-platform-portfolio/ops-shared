@@ -18,6 +18,11 @@ on:
         type: string
         default: ''
 
+      revision:
+        description: Optional full commit SHA to build; empty uses the event's github.sha.
+        type: string
+        default: ''
+
       tag:
         description: Optional Docker tag; defaults to service name, UTC time and commit SHA.
         type: string
@@ -61,7 +66,7 @@ jobs:
 
     env:
       AZURE_CORE_OUTPUT: none
-      SOURCE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      SOURCE_SHA: ${{ inputs.revision || github.sha }}
       PUBLISH: ${{ (github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')) || (inputs['publish-preview'] && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) }}
 
     steps:
@@ -86,8 +91,8 @@ jobs:
         shell: bash
         run: |
           revision=$(git rev-parse HEAD)
-          if [[ "$revision" != "$SOURCE_SHA" ]]; then
-            echo '::error::Checked-out revision does not match the requested source commit.'
+          if [[ ! "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ || "$revision" != "$SOURCE_SHA" ]]; then
+            echo '::error::Source revision must be a full commit SHA matching the checkout.'
             exit 1
           fi
 
