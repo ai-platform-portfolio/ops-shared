@@ -55,8 +55,18 @@ same-repository PR. Fork PRs remain build-only. A push to `main` publishes,
 including a merge to `main`; a manual dispatch on `main` is the fallback publish path. Manual runs
 from other branches build without publishing. The reusable workflow enforces
 this rule. The optional `tag` input replaces the generated tag; pass only the
-tag, not a full image reference. The workflow returns `image` and `digest`
-outputs. `digest` is empty on build-only runs.
+tag, not a full image reference. The workflow returns `image`, `digest` and
+`revision` outputs. `digest` is empty on build-only runs; `revision` is the full
+source commit SHA verified before building.
+
+For `pull_request` events, the workflow explicitly checks out the event's
+`pull_request.head.sha`. Generated tags and the OCI revision label identify that
+same commit. This keeps preview images aligned with the application's reviewed
+source instead of GitHub's synthetic merge commit. Push and manual-dispatch builds
+use the event's `github.sha`. Checkout must match the selected SHA before any
+registry login or build. The SHA is fixed to the triggering event; a newer push
+requires a new run. Consumers must still reject stale runs before deployment.
+See [GitHub's checkout guidance](https://github.com/actions/checkout#checkout-pull-request-head-commit-instead-of-merge-commit).
 
 For one image in a monorepo:
 
