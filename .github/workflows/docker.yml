@@ -47,8 +47,16 @@ on:
         value: ${{ jobs.docker.outputs.revision }}
 
     secrets:
-      AZURE_CREDENTIALS:
-        description: Azure service principal JSON with push access to localacrk8s.
+      AZURE_CLIENT_ID:
+        description: Azure identity client ID with federated GitHub trust and ACR push access.
+        required: false
+
+      AZURE_TENANT_ID:
+        description: Azure tenant containing the publishing identity.
+        required: false
+
+      AZURE_SUBSCRIPTION_ID:
+        description: Azure subscription containing localacrk8s.
         required: false
 
 permissions:
@@ -56,6 +64,10 @@ permissions:
 
 jobs:
   docker:
+    permissions:
+      contents: read
+      id-token: write
+
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -74,12 +86,16 @@ jobs:
         if: env.PUBLISH == 'true'
         shell: bash
         env:
-          AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: |
-          if [[ -z "$AZURE_CREDENTIALS" ]]; then
-            echo '::error::AZURE_CREDENTIALS is required to publish to ACR.'
-            exit 1
-          fi
+          for name in AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::$name is required to publish to ACR."
+              exit 1
+            fi
+          done
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -136,7 +152,9 @@ jobs:
         if: env.PUBLISH == 'true'
         uses: azure/login@v3
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Log in to ACR
         if: env.PUBLISH == 'true'
