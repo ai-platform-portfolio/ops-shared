@@ -28,11 +28,6 @@ on:
         type: boolean
         default: false
 
-      artifact-name:
-        description: Optional Actions artifact name; default includes source SHA, run ID and attempt.
-        type: string
-        default: ''
-
       retention-days:
         description: Actions record retention; independent of image and Atlas retention.
         type: number
@@ -72,12 +67,12 @@ jobs:
           ref: ${{ env.SOURCE_SHA }}
           persist-credentials: false
 
-      # Like the Linear validator, fetch shared code at a commit containing it.
+      # Fetch the script from this reusable workflow's own reviewed revision.
       - name: Fetch the shared record writer
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          repository: ai-platform-portfolio/ops-shared
-          ref: ad60c352abb04651081c4c59a65444d284cf46a1
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           path: .ops-shared
           sparse-checkout: scripts/write-artifact-record.sh
           sparse-checkout-cone-mode: false
@@ -87,15 +82,34 @@ jobs:
 
       - name: Verify source before upload
         id: source
-        uses: ai-platform-portfolio/ops-shared/.github/actions/check-source@ad60c352abb04651081c4c59a65444d284cf46a1
-        with:
-          revision: ${{ env.SOURCE_SHA }}
-          check-current: ${{ inputs.check-current }}
+        env:
+          CHECK_CURRENT: ${{ inputs.check-current }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if [[ "$(git rev-parse HEAD)" != "$SOURCE_SHA" ]]; then
+            echo '::error::Source checkout does not match the selected commit.'
+            exit 1
+          fi
+          if [[ "$CHECK_CURRENT" == true ]]; then
+            if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+              gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" |
+                jq -e --arg sha "$SOURCE_SHA" '.state == "open" and .head.sha == $sha' >/dev/null
+            elif [[ "$GITHUB_REF" == refs/heads/main ]]; then
+              current=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')
+              if [[ "$current" != "$SOURCE_SHA" ]]; then
+                echo '::error::Main advanced beyond the selected commit.'
+                exit 1
+              fi
+            fi
+          fi
+          echo "revision=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         id: upload
         with:
-          name: ${{ inputs.artifact-name || format('artifacts-{0}-{1}-{2}', env.SOURCE_SHA, github.run_id, github.run_attempt) }}
+          name: ${{ format('artifacts-{0}-{1}-{2}', env.SOURCE_SHA, github.run_id, github.run_attempt) }}
           path: artifacts.json
           if-no-files-found: error
           retention-days: ${{ inputs.retention-days }}
