@@ -44,54 +44,55 @@ For Helm rendering, also supply `helm-chart`, `helm-chart-version`, and optional
 `helm-version`. Omitting `helm-chart` skips rendering. Remote charts require a
 pinned chart version. Input defaults are declared in the callable workflow.
 
-## Preview artifact records
+## Helm release packages
 
-The composite action `.github/actions/publish-preview` commits a caller-owned JSON
-record to `previews/pr-<number>.json` on the calling repository's `preview-records`
-branch. It initializes that branch from the PR base automatically. No deployment,
-Kubernetes configuration or application component layout is imposed by the action.
-It uses the existing runner tools Bash, Git, GitHub CLI and jq with native GitHub
-[Contents](https://docs.github.com/en/rest/repos/contents#create-or-update-file-contents)
-and [Refs](https://docs.github.com/en/rest/git/refs#create-a-reference) APIs.
+The composite action `.github/actions/publish-release` packages a selected chart
+with caller-generated release values, then publishes it using native `helm push`.
+The package contains the chart and artifact references, not container image layers.
+The chart remains maintained centrally; application repositories need no chart copy.
 
-Call it only after every required publisher succeeds and the caller validates its
-complete, matching artifact set. The record must be one JSON object containing
-`source.repository` (`owner/repository`) and `source.revision` (full source SHA).
-All other fields belong to the caller: any number of images, migration artifacts
-or generated values can be included. Never include credentials or private data.
+Callers install Helm, check out a pinned chart, authenticate to their registry and
+produce the complete matching release values before calling the action:
 
 ```yaml
-permissions:
-  contents: write
-  pull-requests: read
-
-steps:
-  # Previous caller steps produce the complete artifacts.json record.
-  - uses: ai-platform-portfolio/ops-shared/.github/actions/publish-preview@<merged-commit-sha>
-    with:
-      record: artifacts.json
+- uses: ai-platform-portfolio/ops-shared/.github/actions/publish-release@<merged-commit-sha>
+  with:
+    chart: platform-chart
+    values: release-values.json
+    destination: oci://registry.example/releases/my-app
+    version: ${{ env.RELEASE_VERSION }}
+    revision: ${{ env.SOURCE_SHA }}
 ```
 
-`record` defaults to `artifacts.json`; `branch` defaults to `preview-records`.
-`pull-request` and `revision` default to the PR event's number/head SHA; supply them
-explicitly for other events. `token` defaults to `github.token` and needs contents
-write and pull requests read. The outputs are `commit` and `path`. No checkout
-credentials need to be persisted. The record branch must be distinct from the PR
-head/base and the default branch, and repository rules must permit the write.
+`destination` excludes the chart name/version; Helm derives those from the package.
+The action copies the chart to a temporary directory, adds `release-values.yaml`,
+lints with that overlay, and packages using the selected semantic `version` and
+full source `revision` as `appVersion`. Central defaults/templates and the original
+checkout stay unchanged. Existing dependencies must already be present. The overlay
+filename is reserved, and publication fails if chart ignore rules exclude it.
+Argo's Helm source uses `valueFiles: [release-values.yaml]` to load the overlay.
 
-The publisher rejects stale, closed and fork PRs and mismatched source metadata.
-It checks freshness before writes, on conflict retries and before success outputs.
-Identical records are a no-op. Each PR has its own file; concurrent branch/file
-conflicts get at most three attempts without replacing other PR records. Serialize
-publishers for each PR using the caller's existing workflow concurrency group.
-Transport and permission errors fail rather than being treated as missing files.
+The action requires Bash, tar and Helm. Registry authentication is caller-owned:
+use `helm registry login` before calling it; the optional `registry-config` input
+selects an existing Helm registry credential file. Azure callers can use their
+existing OIDC login and pipe `az acr login --expose-token`'s access token into
+`helm registry login --password-stdin`. Do not print or store that token in Git.
+There are no GitHub repository writes or credentials in this action.
 
-PR state and a Git write are separate API operations, so a head can advance after
-the last check. A post-write check then fails, but the old record may already exist.
-Consumers must use the record's source revision for deployment/test status and
-revalidate the current PR head before reporting success. Argo can read the committed
-JSON through its native Git file generator. ApplicationSet lifecycle integration
-and deployed checks remain separate building blocks.
+Outputs `reference` and `digest` come from Helm's successful push response. Unique
+versions are not automatically immutable: callers own registry write locks and
+retention, version ordering, promotion and rollback policy. Keep packages available
+until dependent Applications and their deletion hooks have finished using them.
+See [Helm OCI](https://docs.helm.sh/docs/v3/topics/registries/) and
+[ACR Helm support](https://learn.microsoft.com/en-us/azure/container-registry/container-registry-helm-repos).
+
+Callers also own image/component layout, matching migration identity, complete-build
+gates, trusted-source checks and per-preview workflow concurrency. Recheck current
+PR/head immediately before publication and after it; report deployed tests against
+the selected release's source SHA. A source check and registry write cannot be one
+transaction. This action packages supplied values; it does not validate that their
+images and migrations were built from that SHA. Never put secrets in release values.
+ApplicationSet lifecycle and deployed test templates are separate building blocks.
 
 ## Docker images
 

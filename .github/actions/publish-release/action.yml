@@ -1,0 +1,52 @@
+name: Publish Helm release
+description: Package a selected chart with caller-generated release values and publish to OCI.
+
+inputs:
+  chart:
+    description: Path to the caller's pinned chart checkout, including any required dependencies.
+    required: true
+
+  values:
+    description: Caller-generated complete release values, in YAML or JSON; never include secrets.
+    required: true
+
+  destination:
+    description: OCI registry and repository prefix, without the chart name or version.
+    required: true
+
+  version:
+    description: Unique semantic release version; callers own ordering and immutability policy.
+    required: true
+
+  revision:
+    description: Full source commit SHA recorded as the packaged chart's appVersion.
+    required: true
+
+  registry-config:
+    description: Optional existing Helm registry credential file; empty uses Helm's default.
+    default: ''
+
+outputs:
+  reference:
+    description: Published chart reference with version, as reported by Helm.
+    value: ${{ steps.publish.outputs.reference }}
+
+  digest:
+    description: Published OCI manifest digest, as reported by Helm.
+    value: ${{ steps.publish.outputs.digest }}
+
+runs:
+  using: composite
+  steps:
+    - name: Package and publish release
+      id: publish
+      shell: bash
+      env:
+        CHART: ${{ inputs.chart }}
+        VALUES: ${{ inputs.values }}
+        DESTINATION: ${{ inputs.destination }}
+        VERSION: ${{ inputs.version }}
+        SOURCE_SHA: ${{ inputs.revision }}
+        REGISTRY_CONFIG: ${{ inputs.registry-config }}
+        ACTION_DIRECTORY: ${{ github.action_path }}
+      run: bash "$ACTION_DIRECTORY/publish.sh"
