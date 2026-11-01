@@ -1,0 +1,30 @@
+name: Verify source revision
+description: Verify the caller checkout and optionally reject a stale PR or main revision.
+
+inputs:
+  revision:
+    description: Optional full commit SHA; empty uses the event github.sha.
+    default: ''
+
+  check-current:
+    description: Also require the current open PR head or main head; PR callers must select the head SHA explicitly.
+    default: 'false'
+
+outputs:
+  revision:
+    description: Full verified source commit SHA.
+    value: ${{ steps.source.outputs.revision }}
+
+runs:
+  using: composite
+  steps:
+    - name: Verify source
+      id: source
+      shell: bash
+      env:
+        SOURCE_SHA: ${{ inputs.revision || github.sha }}
+        CHECK_CURRENT: ${{ inputs.check-current }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        GH_TOKEN: ${{ github.token }}
+        SHARED_ACTION_PATH: ${{ github.action_path }}
+      run: bash "$SHARED_ACTION_PATH/check-source.sh"
