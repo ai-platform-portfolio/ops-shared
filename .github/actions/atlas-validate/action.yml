@@ -1,0 +1,29 @@
+name: Validate Atlas migrations
+description: Check migration checksums and replay on the caller's disposable dev database using an installed Atlas CLI.
+
+inputs:
+  config:
+    description: Caller-owned Atlas configuration URL.
+    default: file://atlas.hcl
+
+  environment:
+    description: Environment declared in the caller's Atlas configuration.
+    required: true
+
+  dev-url:
+    description: Optional disposable dev-database URL; empty uses the caller configuration.
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Validate checksum and replay
+      shell: bash
+      env:
+        CONFIG: ${{ inputs.config }}
+        ATLAS_ENVIRONMENT: ${{ inputs.environment }}
+        DEV_URL: ${{ inputs.dev-url }}
+      run: |
+        args=(--config "$CONFIG" --env "$ATLAS_ENVIRONMENT")
+        if [[ -n "$DEV_URL" ]]; then args+=(--dev-url "$DEV_URL"); fi
+        atlas migrate validate "${args[@]}"

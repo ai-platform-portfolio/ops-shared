@@ -157,3 +157,43 @@ workflow tags each build as `{service_name}_{UTC datetime}_{12-character SHA}`,
 for example `api_20261029T202500Z_a1b2c3d4e5f6`. Each build gets one tag;
 published `main` builds use the same format unless `tag` is supplied. Use a
 `.dockerignore` in each build context to keep irrelevant files out of the build.
+
+
+## Atlas validation action
+
+Applications compose their own jobs: call `docker.yml` per image, use the official
+Atlas setup/test/push actions for Atlas operations, and use this small action for
+migration checksum validation and replay. It requires an Atlas CLI already on
+`PATH`; it does not install tools, authenticate, check out source, publish or apply
+to an application database. The caller owns config, migration paths, dev database,
+revision selection, credentials, triggers, dependencies and artifact records.
+
+```yaml
+steps:
+  # After checking out the application's selected revision:
+  - uses: ariga/setup-atlas@2f3c785c89a15e1c0d07bcae3900fb5feb969eea
+    with:
+      version: v1.3.6
+
+  - uses: ai-platform-portfolio/ops-shared/.github/actions/atlas-validate@<merged-commit-sha>
+    with:
+      environment: local
+      dev-url: docker://postgres/18.6/dev?search_path=public
+```
+
+`environment` is required; `config` defaults to `file://atlas.hcl`. Migration paths
+and dev settings come from that environment. Optional `dev-url` overrides only the
+disposable dev connection. Never supply an application database as the dev target.
+The action succeeds or fails without imposing a job graph or publication policy.
+
+For Pro tests/publication, configure a bot in the caller's trusted job and use
+pinned [`ariga/atlas-action/migrate/test` and `migrate/push`](https://github.com/ariga/atlas-action)
+steps directly. Git-based bootstrap lint can remain a short CLI step; the official
+lint action compares against a Registry baseline. This avoids duplicate wrappers
+and lets applications combine building blocks in their own order.
+
+Registry publication uploads migration source to Atlas. The fintech alternative
+remains Enterprise offline licensing, internal artifacts and verified egress;
+this action does not claim that deployment is implemented. See
+[Atlas privacy](https://atlasgo.io/cli/data-privacy) and
+[offline licensing](https://atlasgo.io/faq/atlas-without-cloud).
