@@ -1,0 +1,47 @@
+name: Publish preview record
+description: Commit a caller-owned artifact record for the current trusted pull request.
+
+inputs:
+  record:
+    description: Caller-owned JSON file containing source.repository and source.revision.
+    default: artifacts.json
+
+  branch:
+    description: Generated record branch in the calling repository; initialized automatically.
+    default: preview-records
+
+  pull-request:
+    description: Pull request number; defaults to the current PR event.
+    default: ${{ github.event.pull_request.number }}
+
+  revision:
+    description: Full source SHA; defaults to the current PR head.
+    default: ${{ github.event.pull_request.head.sha }}
+
+  token:
+    description: Token with contents write and pull requests read in the calling repository.
+    default: ${{ github.token }}
+
+outputs:
+  commit:
+    description: Commit containing the published record.
+    value: ${{ steps.publish.outputs.commit }}
+
+  path:
+    description: Generated record path within the branch.
+    value: ${{ steps.publish.outputs.path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Publish current PR record
+      id: publish
+      shell: bash
+      env:
+        RECORD: ${{ inputs.record }}
+        RECORD_BRANCH: ${{ inputs.branch }}
+        PR_NUMBER: ${{ inputs.pull-request }}
+        SOURCE_SHA: ${{ inputs.revision }}
+        GH_TOKEN: ${{ inputs.token }}
+        ACTION_DIRECTORY: ${{ github.action_path }}
+      run: bash "$ACTION_DIRECTORY/publish.sh"

@@ -44,6 +44,55 @@ For Helm rendering, also supply `helm-chart`, `helm-chart-version`, and optional
 `helm-version`. Omitting `helm-chart` skips rendering. Remote charts require a
 pinned chart version. Input defaults are declared in the callable workflow.
 
+## Preview artifact records
+
+The composite action `.github/actions/publish-preview` commits a caller-owned JSON
+record to `previews/pr-<number>.json` on the calling repository's `preview-records`
+branch. It initializes that branch from the PR base automatically. No deployment,
+Kubernetes configuration or application component layout is imposed by the action.
+It uses the existing runner tools Bash, Git, GitHub CLI and jq with native GitHub
+[Contents](https://docs.github.com/en/rest/repos/contents#create-or-update-file-contents)
+and [Refs](https://docs.github.com/en/rest/git/refs#create-a-reference) APIs.
+
+Call it only after every required publisher succeeds and the caller validates its
+complete, matching artifact set. The record must be one JSON object containing
+`source.repository` (`owner/repository`) and `source.revision` (full source SHA).
+All other fields belong to the caller: any number of images, migration artifacts
+or generated values can be included. Never include credentials or private data.
+
+```yaml
+permissions:
+  contents: write
+  pull-requests: read
+
+steps:
+  # Previous caller steps produce the complete artifacts.json record.
+  - uses: ai-platform-portfolio/ops-shared/.github/actions/publish-preview@<merged-commit-sha>
+    with:
+      record: artifacts.json
+```
+
+`record` defaults to `artifacts.json`; `branch` defaults to `preview-records`.
+`pull-request` and `revision` default to the PR event's number/head SHA; supply them
+explicitly for other events. `token` defaults to `github.token` and needs contents
+write and pull requests read. The outputs are `commit` and `path`. No checkout
+credentials need to be persisted. The record branch must be distinct from the PR
+head/base and the default branch, and repository rules must permit the write.
+
+The publisher rejects stale, closed and fork PRs and mismatched source metadata.
+It checks freshness before writes, on conflict retries and before success outputs.
+Identical records are a no-op. Each PR has its own file; concurrent branch/file
+conflicts get at most three attempts without replacing other PR records. Serialize
+publishers for each PR using the caller's existing workflow concurrency group.
+Transport and permission errors fail rather than being treated as missing files.
+
+PR state and a Git write are separate API operations, so a head can advance after
+the last check. A post-write check then fails, but the old record may already exist.
+Consumers must use the record's source revision for deployment/test status and
+revalidate the current PR head before reporting success. Argo can read the committed
+JSON through its native Git file generator. ApplicationSet lifecycle integration
+and deployed checks remain separate building blocks.
+
 ## Docker images
 
 Call `docker.yml` once per image. The caller supplies a repository path within
