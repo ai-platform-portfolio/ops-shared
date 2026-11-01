@@ -87,6 +87,7 @@ jobs:
   api:
     permissions:
       contents: read
+      id-token: write
 
     uses: ai-platform-portfolio/ops-shared/.github/workflows/docker.yml@<merged-commit-sha>
     with:
@@ -95,7 +96,9 @@ jobs:
       file: services/api/Dockerfile
 
     secrets:
-      AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 ```
 
 For several images, replace the `jobs` block with a matrix:
@@ -105,6 +108,7 @@ jobs:
   images:
     permissions:
       contents: read
+      id-token: write
 
     strategy:
       fail-fast: false
@@ -125,17 +129,23 @@ jobs:
       file: ${{ matrix.file }}
 
     secrets:
-      AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 ```
 
-The organization secret `AZURE_CREDENTIALS` must be available to each caller
-repository and contain Azure service principal JSON authorized to push to
-`localacrk8s`. It is required for publishing runs and optional for build-only PRs;
-the workflow fails early if a publish run has no credential. The manual dispatch
-trigger belongs in the caller workflow, which provides the application source.
+The existing organization secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and
+`AZURE_SUBSCRIPTION_ID` must be available to the caller. Native Azure OIDC login
+uses those IDs with `id-token: write`; no client secret or JSON credential is
+needed. The identity must trust the caller repository's GitHub OIDC subject and
+have push access to `localacrk8s`. PR subjects end in `:pull_request`; main subjects
+end in `:ref:refs/heads/main` when no GitHub environment is selected. Reusing a
+workflow does not change that caller subject. These secrets are required only for
+publishing; fork/build-only runs do not authenticate. Manual dispatch belongs in
+the caller. See [Azure OIDC setup](https://github.com/Azure/login#login-with-openid-connect-oidc-recommended).
 
 For a PR preview, opt in explicitly and tag the PR head commit. The caller must
-trust same-repository PR authors with access to its publishing credential:
+trust same-repository PR authors with access to its publishing identity:
 
 ```yaml
 with:
