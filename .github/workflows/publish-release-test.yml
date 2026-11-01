@@ -1,0 +1,27 @@
+name: Test Helm release publisher
+
+on:
+  pull_request:
+    paths: ['.github/actions/publish-release/**', 'tests/test_release_publication.py', '.github/workflows/publish-release-test.yml']
+  push:
+    branches: [main]
+    paths: ['.github/actions/publish-release/**', 'tests/test_release_publication.py', '.github/workflows/publish-release-test.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - uses: azure/setup-helm@b9e51907a09c216f16ebe8536097933489208112 # v4.3.0
+        with:
+          version: v3.22.1
+
+      - run: python3 -m unittest discover -s tests -p 'test_release_publication.py' -v
