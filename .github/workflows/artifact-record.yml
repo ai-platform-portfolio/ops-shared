@@ -1,0 +1,101 @@
+name: Record published application artifacts
+
+on:
+  workflow_call:
+    inputs:
+      images:
+        description: JSON map of caller-named images, each with image (tagged reference), digest and revision.
+        type: string
+        required: true
+
+      migration:
+        description: JSON migration identity returned by atlas.yml.
+        type: string
+        required: true
+
+      migration-directory:
+        description: Caller-relative migration directory for local checksum verification.
+        type: string
+        default: migrations
+
+      revision:
+        description: Optional full commit SHA; empty uses the event github.sha.
+        type: string
+        default: ''
+
+      check-current:
+        description: Reject a stale PR or main revision before upload.
+        type: boolean
+        default: false
+
+      artifact-name:
+        description: Optional Actions artifact name; default includes source SHA, run ID and attempt.
+        type: string
+        default: ''
+
+      retention-days:
+        description: Actions record retention; independent of image and Atlas retention.
+        type: number
+        default: 7
+
+    outputs:
+      revision:
+        description: Verified source SHA recorded in the artifact.
+        value: ${{ jobs.record.outputs.revision }}
+
+      artifact-id:
+        description: GitHub Actions artifact ID.
+        value: ${{ jobs.record.outputs.artifact-id }}
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    outputs:
+      revision: ${{ steps.source.outputs.revision }}
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+
+    env:
+      SOURCE_SHA: ${{ inputs.revision || github.sha }}
+      IMAGES_JSON: ${{ inputs.images }}
+      MIGRATION_JSON: ${{ inputs.migration }}
+      MIGRATION_DIRECTORY: ${{ inputs.migration-directory }}
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          persist-credentials: false
+
+      # Like the Linear validator, fetch shared code at a commit containing it.
+      - name: Fetch the shared record writer
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ai-platform-portfolio/ops-shared
+          ref: ad60c352abb04651081c4c59a65444d284cf46a1
+          path: .ops-shared
+          sparse-checkout: scripts/write-artifact-record.sh
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - run: bash .ops-shared/scripts/write-artifact-record.sh
+
+      - name: Verify source before upload
+        id: source
+        uses: ai-platform-portfolio/ops-shared/.github/actions/check-source@ad60c352abb04651081c4c59a65444d284cf46a1
+        with:
+          revision: ${{ env.SOURCE_SHA }}
+          check-current: ${{ inputs.check-current }}
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        id: upload
+        with:
+          name: ${{ inputs.artifact-name || format('artifacts-{0}-{1}-{2}', env.SOURCE_SHA, github.run_id, github.run_attempt) }}
+          path: artifacts.json
+          if-no-files-found: error
+          retention-days: ${{ inputs.retention-days }}
