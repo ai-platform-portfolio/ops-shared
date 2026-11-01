@@ -7,8 +7,6 @@ Reusable GitHub Actions workflow templates. Callers choose their events and inpu
 | `.github/workflows/linear-issue-check.yml` | Validate PR branch issue IDs through Linear read-only OAuth |
 | `.github/workflows/validate.yml` | Terraform formatting and validation, with optional Helm rendering |
 | `.github/workflows/docker.yml` | Build or publish to the platform ACR with image-scoped BuildKit caching |
-| `.github/workflows/atlas.yml` | Validate, lint, test and optionally publish one caller-owned migration directory |
-| `.github/workflows/artifact-record.yml` | Verify and record named images plus one published Atlas migration directory |
 
 ## Usage
 
@@ -161,67 +159,41 @@ published `main` builds use the same format unless `tag` is supplied. Use a
 `.dockerignore` in each build context to keep irrelevant files out of the build.
 
 
-## Atlas migrations and artifact records
+## Atlas validation action
 
-Call `atlas.yml` once per migration directory. The application owns SQL, tests and
-Atlas configuration; the workflow validates/replays migrations, optionally runs
-Pro lint/tests, and optionally publishes them. It never applies to an application
-database. Publication defaults off; main publishing requires `publish: true`, and
-trusted same-repository PR publishing additionally requires `publish-preview: true`.
-Forks cannot publish. PR pushes tag the source SHA without advancing Atlas `latest`.
+Applications compose their own jobs: call `docker.yml` per image, use the official
+Atlas setup/test/push actions for Atlas operations, and use this small action for
+migration checksum validation and replay. It requires an Atlas CLI already on
+`PATH`; it does not install tools, authenticate, check out source, publish or apply
+to an application database. The caller owns config, migration paths, dev database,
+revision selection, credentials, triggers, dependencies and artifact records.
 
 ```yaml
-jobs:
-  migrations:
-    uses: ai-platform-portfolio/ops-shared/.github/workflows/atlas.yml@<merged-commit-sha>
+steps:
+  # After checking out the application's selected revision:
+  - uses: ariga/setup-atlas@2f3c785c89a15e1c0d07bcae3900fb5feb969eea
     with:
-      config: file://atlas.ci.hcl
-      environment: ci
-      directory: migrations
-      registry: ledger-schema
-      revision: ${{ github.event.pull_request.head.sha || github.sha }}
-      publish: true
-      publish-preview: true
-    secrets:
-      ATLAS_CLOUD_TOKEN: ${{ secrets.ATLAS_CLOUD_TOKEN }}
+      version: v1.3.6
+
+  - uses: ai-platform-portfolio/ops-shared/.github/actions/atlas-validate@<merged-commit-sha>
+    with:
+      environment: local
+      dev-url: docker://postgres/18.6/dev?search_path=public
 ```
 
-Only `environment` is required. Config/directory default to `file://atlas.hcl` and
-`migrations`; empty `revision` preserves event `github.sha` (the merge SHA on PRs).
-Optional `dev-url` overrides the config's disposable dev database. Atlas is pinned
-to 1.3.6. Lint/tests default on and require a bot; for anonymous fork replay, set
-`lint: false` and `test: false`, use a config without a Cloud login requirement,
-and omit publishing credentials. Trusted callers should pin their Atlas organization
-in config. No application-database credentials belong in these jobs.
+`environment` is required; `config` defaults to `file://atlas.hcl`. Migration paths
+and dev settings come from that environment. Optional `dev-url` overrides only the
+disposable dev connection. Never supply an application database as the dev target.
+The action succeeds or fails without imposing a job graph or publication policy.
 
-Outputs are `revision`, `published` and `migration`: JSON containing repository,
-SHA tag, revision, checksum and published flag. Only a successful publishing call
-reports `published: true`. A registry is required for that path.
+For Pro tests/publication, configure a bot in the caller's trusted job and use
+pinned [`ariga/atlas-action/migrate/test` and `migrate/push`](https://github.com/ariga/atlas-action)
+steps directly. Git-based bootstrap lint can remain a short CLI step; the official
+lint action compares against a Registry baseline. This avoids duplicate wrappers
+and lets applications combine building blocks in their own order.
 
-After successful publishers, call `artifact-record.yml` with an `images` JSON map
-of named `{image, digest, revision}` entries and `migration` from the Atlas output.
-Pass the same `revision` and `migration-directory` (default `migrations`). It checks
-all revisions, image digests and the migration checksum, then uploads `artifacts.json`.
-The name includes SHA/run/attempt; `retention-days` defaults to 7. Outputs are
-`revision` and `artifact-id`. Use explicitly named image jobs when gathering digests;
-[reusable matrix outputs](https://docs.github.com/en/actions/how-tos/reuse-automations/reuse-workflows#using-outputs-from-a-reusable-workflow)
-do not aggregate every image result.
-
-The caller owns events, concurrency, dependencies and initial freshness checks.
-Set record input `check-current: true` for a final open-PR/main-head check before
-upload; select the PR head explicitly. Consumers must still require a successful
-current-SHA run before deployment: checking head and uploading cannot be atomic.
-Partial publications must not select a deployment revision. Neither this record
-nor SHA tags configure image/Atlas retention or server-side tag locking.
-
-The record workflow fetches its script using native `job.workflow_repository` and
-`job.workflow_sha`, keeping it at the caller-selected workflow revision without
-another helper pin. These contexts require GitHub.com/Enterprise Cloud; Server
-support is not implemented. See [GitHub context documentation](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts#job-context).
-Run the focused checks with `python3 -B -m unittest discover -s tests -p 'test_publication.py'`.
-
-Publishing uploads migration SQL to hosted Atlas Registry. A fintech deployment
-requiring no vendor transfer needs an assessed Enterprise offline licence,
-internal artifacts and verified egress controls; this workflow does not implement
-that alternative. See [Atlas privacy](https://atlasgo.io/cli/data-privacy) and
+Registry publication uploads migration source to Atlas. The fintech alternative
+remains Enterprise offline licensing, internal artifacts and verified egress;
+this action does not claim that deployment is implemented. See
+[Atlas privacy](https://atlasgo.io/cli/data-privacy) and
 [offline licensing](https://atlasgo.io/faq/atlas-without-cloud).
