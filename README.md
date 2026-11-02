@@ -111,10 +111,17 @@ The action copies the chart to a temporary directory, adds `release-values.yaml`
 lints with that overlay, and packages using the selected semantic `version` and
 full source `revision` as `appVersion`. Central defaults/templates and the original
 checkout stay unchanged. Existing dependencies must already be present. The overlay
-filename is reserved, and publication fails if chart ignore rules exclude it.
+and `publication.json` filenames are reserved; publication fails if chart ignore
+rules exclude either file. `publication.json` records `repository`, `workflowRef`,
+`runId` and `runAttempt` as strings, taken automatically from GitHub's caller context.
+It identifies the exact workflow attempt for a later independent GitHub API check;
+package presence and this metadata do not attest successful workflow completion.
+The source revision remains in the packaged chart's `appVersion`. No extra caller
+inputs or Kubernetes resources are needed for this metadata.
 Argo's Helm source uses `valueFiles: [release-values.yaml]` to load the overlay.
 
-The action requires Bash, tar and Helm. Registry authentication is caller-owned:
+The action requires Bash, tar, jq and Helm (jq is preinstalled on GitHub-hosted Linux
+runners). Registry authentication is caller-owned:
 use `helm registry login` before calling it; the optional `registry-config` input
 selects an existing Helm registry credential file. Azure callers can use their
 `acr-helm-login` action above. Do not print or store tokens in Git.

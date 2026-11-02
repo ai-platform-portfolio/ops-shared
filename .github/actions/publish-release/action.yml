@@ -47,6 +47,10 @@ runs:
         DESTINATION: ${{ inputs.destination }}
         VERSION: ${{ inputs.version }}
         SOURCE_SHA: ${{ inputs.revision }}
+        PUBLICATION_REPOSITORY: ${{ github.repository }}
+        PUBLICATION_WORKFLOW_REF: ${{ github.workflow_ref }}
+        PUBLICATION_RUN_ID: ${{ github.run_id }}
+        PUBLICATION_RUN_ATTEMPT: ${{ github.run_attempt }}
         REGISTRY_CONFIG: ${{ inputs.registry-config }}
         ACTION_DIRECTORY: ${{ github.action_path }}
       run: bash "$ACTION_DIRECTORY/publish.sh"
