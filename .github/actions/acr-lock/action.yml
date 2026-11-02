@@ -1,0 +1,30 @@
+name: Lock an ACR artifact
+description: Disable writes to a supplied ACR tag or digest using the existing Azure session.
+
+inputs:
+  registry:
+    description: Azure Container Registry name, without the azurecr.io suffix.
+    required: true
+
+  reference:
+    description: Full artifact reference including registry hostname and tag or digest.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Disable artifact writes
+      shell: bash
+      env:
+        REGISTRY: ${{ inputs.registry }}
+        REFERENCE: ${{ inputs.reference }}
+      run: |
+        set -euo pipefail
+        prefix="$REGISTRY.azurecr.io/"
+        if [[ -z "$REGISTRY" || "$REFERENCE" != "$prefix"* || "${REFERENCE#"$prefix"}" != *:* ]]; then
+          echo 'Artifact reference must include the selected registry and a tag or digest.' >&2
+          exit 1
+        fi
+
+        az acr repository update --name "$REGISTRY" \
+          --image "${REFERENCE#"$prefix"}" --write-enabled false --output none

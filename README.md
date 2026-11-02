@@ -44,6 +44,48 @@ For Helm rendering, also supply `helm-chart`, `helm-chart-version`, and optional
 `helm-version`. Omitting `helm-chart` skips rendering. Remote charts require a
 pinned chart version. Input defaults are declared in the callable workflow.
 
+## Azure registry building blocks
+
+Use `.github/actions/acr-helm-login` to authenticate with GitHub OIDC and log an
+installed Helm CLI in to ACR. The caller grants `id-token: write` and supplies its
+existing Azure identity IDs, with matching federated trust and registry access:
+
+```yaml
+- uses: ai-platform-portfolio/ops-shared/.github/actions/acr-helm-login@<merged-commit-sha>
+  with:
+    registry: exampleacr
+    client-id: ${{ secrets.AZURE_CLIENT_ID }}
+    tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+    subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+```
+
+The action performs native `azure/login`, then pipes a short-lived ACR token to
+`helm registry login --password-stdin`; no stored registry password is needed.
+It requires Azure CLI and Helm. The registry input is the ACR resource name,
+without `.azurecr.io`; these actions target Azure public-cloud registry hostnames.
+Tokens are not action outputs or command-line password arguments.
+
+After publication, `.github/actions/acr-lock` disables writes to the supplied tag
+or digest using the current Azure session. It does not log in again and can be
+used with container images or other ACR artifacts independently of Helm:
+
+```yaml
+- uses: ai-platform-portfolio/ops-shared/.github/actions/acr-lock@<merged-commit-sha>
+  with:
+    registry: exampleacr
+    reference: ${{ steps.publish.outputs.reference }}
+```
+
+The full reference must belong to the selected registry and include a tag or
+digest. The identity needs permission to update registry artifact attributes;
+push permission alone must not be assumed sufficient. Locking prevents writes
+and can block deletion, so retention must deliberately unlock artifacts only
+after consumers and deletion hooks finish. Registry writes and locking are separate
+operations; a failed lock fails the caller step. Callers own freshness and success
+gates. Neither action assumes component names, release layout or a database.
+See [ACR authentication](https://learn.microsoft.com/en-us/azure/container-registry/container-registry-authentication#use-az-acr-login-without-docker-daemon)
+and [artifact locking](https://learn.microsoft.com/en-us/azure/container-registry/container-registry-image-lock).
+
 ## Helm release packages
 
 The composite action `.github/actions/publish-release` packages a selected chart
@@ -75,8 +117,7 @@ Argo's Helm source uses `valueFiles: [release-values.yaml]` to load the overlay.
 The action requires Bash, tar and Helm. Registry authentication is caller-owned:
 use `helm registry login` before calling it; the optional `registry-config` input
 selects an existing Helm registry credential file. Azure callers can use their
-existing OIDC login and pipe `az acr login --expose-token`'s access token into
-`helm registry login --password-stdin`. Do not print or store that token in Git.
+`acr-helm-login` action above. Do not print or store tokens in Git.
 There are no GitHub repository writes or credentials in this action.
 
 Outputs `reference` and `digest` come from Helm's successful push response. Unique

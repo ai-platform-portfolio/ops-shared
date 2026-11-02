@@ -1,11 +1,11 @@
-name: Test Helm release publisher
+name: Test release publication actions
 
 on:
   pull_request:
-    paths: ['.github/actions/publish-release/**', 'tests/test_release_publication.py', '.github/workflows/publish-release-test.yml']
+    paths: ['.github/actions/publish-release/**', '.github/actions/acr-*/**', 'tests/test_release_publication.py', '.github/workflows/publish-release-test.yml']
   push:
     branches: [main]
-    paths: ['.github/actions/publish-release/**', 'tests/test_release_publication.py', '.github/workflows/publish-release-test.yml']
+    paths: ['.github/actions/publish-release/**', '.github/actions/acr-*/**', 'tests/test_release_publication.py', '.github/workflows/publish-release-test.yml']
 
 permissions:
   contents: read
@@ -23,5 +23,7 @@ jobs:
       - uses: azure/setup-helm@b9e51907a09c216f16ebe8536097933489208112 # v4.3.0
         with:
           version: v3.22.1
+
+      - run: python3 -m pip install PyYAML==6.0.3
 
       - run: python3 -m unittest discover -s tests -p 'test_release_publication.py' -v
