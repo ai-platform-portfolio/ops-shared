@@ -1,0 +1,37 @@
+name: Ensure Atlas repository
+description: Create or verify a registry repository using the caller's installed, authenticated Atlas CLI.
+
+inputs:
+  name:
+    description: Stable Atlas repository slug.
+    required: true
+
+  type:
+    description: Registry type, schema or migration_directory.
+    required: true
+
+  driver:
+    description: Database driver, such as postgres.
+    required: true
+
+outputs:
+  name:
+    description: Verified repository slug.
+    value: ${{ steps.repository.outputs.name }}
+
+  url:
+    description: Verified Atlas registry URL.
+    value: ${{ steps.repository.outputs.url }}
+
+runs:
+  using: composite
+  steps:
+    - name: Ensure registry repository
+      id: repository
+      shell: bash
+      env:
+        ATLAS_REPOSITORY: ${{ inputs.name }}
+        ATLAS_REPOSITORY_TYPE: ${{ inputs.type }}
+        ATLAS_DRIVER: ${{ inputs.driver }}
+        ACTION_DIRECTORY: ${{ github.action_path }}
+      run: bash "$ACTION_DIRECTORY/ensure.sh"
