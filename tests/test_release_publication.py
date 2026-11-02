@@ -92,6 +92,9 @@ class ReleasePublicationTests(unittest.TestCase):
                     "CHART": str(self.chart), "VALUES": str(self.root / "release.json"),
                     "DESTINATION": "oci://registry.example/releases", "VERSION": "0.12.1-g" + SHA,
                     "SOURCE_SHA": SHA, "REGISTRY_CONFIG": "", "GITHUB_OUTPUT": str(self.root / "output"),
+                    "PUBLICATION_REPOSITORY": "example/app",
+                    "PUBLICATION_WORKFLOW_REF": "example/app/.github/workflows/publish.yml@refs/pull/42/merge",
+                    "PUBLICATION_RUN_ID": "12345", "PUBLICATION_RUN_ATTEMPT": "2",
                     "CAPTURE": str(self.root / "published.tgz"), "PUSH_ARGS": str(self.root / "push.json")}
         bin_dir = self.root / "bin"
         bin_dir.mkdir()
@@ -130,9 +133,15 @@ print("Digest: " + ("bad" if os.environ.get("BAD_DIGEST") else "sha256:" + "b"*6
             self.assertIn("appVersion: " + SHA, archive.extractfile("demo/Chart.yaml").read().decode())
             self.assertEqual(json.loads(archive.extractfile("demo/release-values.yaml").read()),
                              {"message": "selected artifact"})
+            self.assertEqual(json.loads(archive.extractfile("demo/publication.json").read()), {
+                "repository": "example/app",
+                "workflowRef": "example/app/.github/workflows/publish.yml@refs/pull/42/merge",
+                "runId": "12345", "runAttempt": "2",
+            })
         for name, content in original.items():
             self.assertEqual((self.chart / name).read_bytes(), content)
         self.assertFalse((self.chart / "release-values.yaml").exists())
+        self.assertFalse((self.chart / "publication.json").exists())
         rendered = subprocess.check_output([self.helm, "template", "demo", str(self.root / "published.tgz"),
                                            "-f", str(self.root / "release.json")], text=True)
         self.assertIn('message: "selected artifact"', rendered)
@@ -141,6 +150,8 @@ print("Digest: " + ("bad" if os.environ.get("BAD_DIGEST") else "sha256:" + "b"*6
     def test_native_validation_prevents_invalid_releases(self):
         for overrides in [{"SOURCE_SHA": "short"}, {"VERSION": ""}, {"VERSION": "not-semver"},
                           {"DESTINATION": "https://registry.example"},
+                          {"PUBLICATION_REPOSITORY": ""}, {"PUBLICATION_RUN_ID": "0"},
+                          {"PUBLICATION_RUN_ATTEMPT": "bad"}, {"PUBLICATION_WORKFLOW_REF": "other/app/workflow.yml"},
                           {"VALUES": str(self.root / "missing")}, {"CHART": str(self.root / "missing")}]:
             with self.subTest(overrides=overrides):
                 self.run_publisher(False, **overrides)
@@ -151,16 +162,23 @@ print("Digest: " + ("bad" if os.environ.get("BAD_DIGEST") else "sha256:" + "b"*6
         self.run_publisher(False)
         self.assertFalse((self.root / "push.json").exists())
         (self.root / "release.json").write_text("{}")
-        (self.chart / ".helmignore").write_text("release-values.yaml\n")
-        self.run_publisher(False)
-        self.assertFalse((self.root / "push.json").exists())
+        for file in ("release-values.yaml", "publication.json"):
+            (self.chart / ".helmignore").write_text(file + "\n")
+            self.run_publisher(False)
+            self.assertFalse((self.root / "push.json").exists())
 
-    def test_existing_overlay_is_not_overwritten(self):
-        overlay = self.chart / "release-values.yaml"
-        overlay.write_text("reserved")
-        self.run_publisher(False)
-        self.assertEqual(overlay.read_text(), "reserved")
-        self.assertFalse((self.root / "push.json").exists())
+    def test_reserved_files_and_symlinks_are_not_overwritten(self):
+        for file in ("release-values.yaml", "publication.json"):
+            reserved = self.chart / file
+            reserved.write_text("reserved")
+            self.run_publisher(False)
+            self.assertEqual(reserved.read_text(), "reserved")
+            reserved.unlink()
+            reserved.symlink_to(self.root / "missing")
+            self.run_publisher(False)
+            self.assertTrue(reserved.is_symlink())
+            reserved.unlink()
+            self.assertFalse((self.root / "push.json").exists())
 
     def test_registry_config_is_forwarded_and_failed_push_has_no_outputs(self):
         self.run_publisher(REGISTRY_CONFIG="/private/registry config.json")
