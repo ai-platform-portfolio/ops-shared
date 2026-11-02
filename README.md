@@ -88,6 +88,29 @@ and [artifact locking](https://learn.microsoft.com/en-us/azure/container-registr
 
 ## Helm release packages
 
+### Atlas registry prerequisites
+
+`.github/actions/atlas-repository` ensures a registry repository before publication.
+The caller installs/logs in with the existing pinned `ariga/setup-atlas` action and
+supplies `name`, `type` (`schema` or `migration_directory`) and `driver` (`postgres`,
+for example). It returns the verified `name` and `url`; Bash, jq and Atlas are required.
+Authentication and Atlas organization selection remain caller-owned.
+
+The action lists all pages before deciding a repository is absent, then verifies
+the final type/driver. A concurrent creator is accepted only after the same final
+verification. Auth/network errors and incompatible existing repositories fail
+without outputs; repositories are never modified or deleted. PostgreSQL's reported
+`POSTGRESQL` driver normalizes to `postgres`. This wrapper uses existing CLI commands
+because the pinned CLI lacks `--skip-if-exists` and the vendor create action fails
+on an existing repository. Server error payloads are not logged.
+
+Callers should derive one stable schema-plan repository per application, shared by
+its PR previews, and record its reference in release values. This is registry setup
+beside artifact publication; database roles and migrations remain operator-owned
+in Kubernetes. Repositories retain plan/audit history after a preview is deleted.
+
+### Package and publish
+
 The composite action `.github/actions/publish-release` packages a selected chart
 with caller-generated release values, then publishes it using native `helm push`.
 The package contains the chart and artifact references, not container image layers.
