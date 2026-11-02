@@ -10,9 +10,67 @@ import tarfile
 import tempfile
 import unittest
 
+import yaml
+
 
 SCRIPT = Path(__file__).resolve().parents[1] / ".github/actions/publish-release/publish.sh"
 SHA = "a" * 40
+
+
+class AcrActionTests(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory(prefix="acr-actions-")
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+        for command in ("az", "helm"):
+            stub = self.root / command
+            stub.write_text(f"#!{sys.executable}\n" + '''
+import json, os, sys
+from pathlib import Path
+name = Path(sys.argv[0]).name
+root = Path(os.environ["CAPTURE"])
+(root / (name + ".json")).write_text(json.dumps(sys.argv[1:]))
+if name == "az":
+    if os.environ.get("AZ_FAIL"): raise SystemExit(1)
+    if sys.argv[1:3] == ["acr", "login"]: print("fixture-token")
+else:
+    (root / "stdin").write_text(sys.stdin.read())
+    if os.environ.get("HELM_FAIL"): raise SystemExit(1)
+''')
+            stub.chmod(0o755)
+
+    def run_action(self, action, **overrides):
+        metadata = yaml.safe_load((SCRIPT.parent.parent / action / "action.yml").read_text())
+        script = next(step["run"] for step in metadata["runs"]["steps"] if "run" in step)
+        env = {**os.environ, "PATH": str(self.root) + os.pathsep + os.environ["PATH"],
+               "CAPTURE": str(self.root), "REGISTRY": "exampleacr",
+               "REFERENCE": "exampleacr.azurecr.io/releases/demo:0.1.0", **overrides}
+        return subprocess.run(["bash", "-c", script], env=env, capture_output=True, text=True)
+
+    def test_login_passes_token_only_through_stdin_and_propagates_failures(self):
+        result = self.run_action("acr-helm-login")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.root / "stdin").read_text(), "fixture-token\n")
+        self.assertNotIn("fixture-token", result.stdout + result.stderr)
+        args = json.loads((self.root / "helm.json").read_text())
+        self.assertIn("exampleacr.azurecr.io", args)
+        self.assertIn("--password-stdin", args)
+        self.assertNotIn("fixture-token", args)
+        self.assertNotEqual(self.run_action("acr-helm-login", AZ_FAIL="true").returncode, 0)
+        self.assertNotEqual(self.run_action("acr-helm-login", HELM_FAIL="true").returncode, 0)
+
+    def test_lock_scopes_tag_or_digest_and_rejects_wrong_registry(self):
+        for image in ("releases/demo:0.1.0", "releases/demo@sha256:" + "b" * 64):
+            result = self.run_action("acr-lock", REFERENCE="exampleacr.azurecr.io/" + image)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            args = json.loads((self.root / "az.json").read_text())
+            self.assertEqual(args, ["acr", "repository", "update", "--name", "exampleacr",
+                                    "--image", image, "--write-enabled", "false", "--output", "none"])
+        (self.root / "az.json").unlink()
+        for reference in ("other.azurecr.io/demo:1", "exampleacr.azurecr.io/demo", ""):
+            self.assertNotEqual(self.run_action("acr-lock", REFERENCE=reference).returncode, 0)
+            self.assertFalse((self.root / "az.json").exists())
+        self.assertNotEqual(self.run_action("acr-lock", AZ_FAIL="true").returncode, 0)
 
 
 class ReleasePublicationTests(unittest.TestCase):

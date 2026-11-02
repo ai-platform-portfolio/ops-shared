@@ -1,0 +1,38 @@
+name: Log Helm in to ACR
+description: Authenticate with GitHub OIDC and pass a short-lived ACR token directly to Helm.
+
+inputs:
+  registry:
+    description: Azure Container Registry name, without the azurecr.io suffix.
+    required: true
+
+  client-id:
+    description: Azure identity client ID with federated GitHub trust and registry access.
+    required: true
+
+  tenant-id:
+    description: Azure identity tenant ID.
+    required: true
+
+  subscription-id:
+    description: Azure subscription containing the registry.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - uses: azure/login@v3
+      with:
+        client-id: ${{ inputs.client-id }}
+        tenant-id: ${{ inputs.tenant-id }}
+        subscription-id: ${{ inputs.subscription-id }}
+
+    - name: Authenticate Helm
+      shell: bash
+      env:
+        REGISTRY: ${{ inputs.registry }}
+      run: |
+        set -euo pipefail
+        az acr login --name "$REGISTRY" --expose-token --query accessToken -o tsv |
+          helm registry login "$REGISTRY.azurecr.io" \
+            --username 00000000-0000-0000-0000-000000000000 --password-stdin
