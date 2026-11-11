@@ -1,0 +1,94 @@
+name: Deploy Foundry agent
+description: Deploy one native azure.yaml agent service using Azure Developer CLI and GitHub OIDC.
+
+inputs:
+  service:
+    description: Agent service key in the caller's azure.yaml.
+    required: true
+
+  environment:
+    description: Native azd environment name.
+    required: true
+
+  working-directory:
+    description: Directory containing the caller's azure.yaml.
+    default: .
+
+  client-id:
+    description: Existing Azure identity with GitHub federated trust.
+    required: true
+
+  tenant-id:
+    description: Azure identity tenant ID.
+    required: true
+
+  subscription-id:
+    description: Target Azure subscription.
+    required: true
+
+  location:
+    description: Azure location for the native azd environment.
+    required: true
+
+  azd-version:
+    description: Version installed only when azd is absent. Existing compatible installations are reused.
+    default: 1.37.3
+
+runs:
+  using: composite
+  steps:
+    - name: Check for Azure Developer CLI
+      id: azd
+      shell: bash
+      run: |
+        if command -v azd >/dev/null 2>&1; then
+          echo 'installed=true' >> "$GITHUB_OUTPUT"
+        else
+          echo 'installed=false' >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Install Azure Developer CLI when missing
+      if: steps.azd.outputs.installed != 'true'
+      uses: Azure/setup-azd@0b7e3a35ab00f2eee7080c845eb39c3f0ebfa553 # v2
+      with:
+        version: ${{ inputs.azd-version }}
+
+    - name: Install Foundry agent extension
+      shell: bash
+      run: azd extension install azure.ai.agents --version 1.0.0 --no-prompt
+
+    - name: Authenticate with GitHub OIDC
+      shell: bash
+      env:
+        AZURE_CLIENT_ID: ${{ inputs.client-id }}
+        AZURE_TENANT_ID: ${{ inputs.tenant-id }}
+      run: |
+        azd auth login --client-id "$AZURE_CLIENT_ID" --tenant-id "$AZURE_TENANT_ID" \
+          --federated-credential-provider github --no-prompt
+
+    - name: Select or create local azd environment
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        AZURE_ENV_NAME: ${{ inputs.environment }}
+        AZURE_SUBSCRIPTION_ID: ${{ inputs.subscription-id }}
+        AZURE_LOCATION: ${{ inputs.location }}
+      run: |
+        if [[ -f ".azure/$AZURE_ENV_NAME/.env" ]]; then
+          azd env select "$AZURE_ENV_NAME" --no-prompt
+        else
+          azd env new "$AZURE_ENV_NAME" --subscription "$AZURE_SUBSCRIPTION_ID" \
+            --location "$AZURE_LOCATION" --no-prompt
+        fi
+        azd env set "AZURE_SUBSCRIPTION_ID=$AZURE_SUBSCRIPTION_ID" "AZURE_LOCATION=$AZURE_LOCATION" \
+          --environment "$AZURE_ENV_NAME" --no-prompt
+
+    - name: Deploy selected Foundry agent
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        SERVICE: ${{ inputs.service }}
+        AZURE_ENV_NAME: ${{ inputs.environment }}
+      run: |
+        : "${SERVICE:?service is required}" "${AZURE_ENV_NAME:?environment is required}"
+        azd deploy --environment "$AZURE_ENV_NAME" --no-prompt -- "$SERVICE"
