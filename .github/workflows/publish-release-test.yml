@@ -2,10 +2,10 @@ name: Test release publication actions
 
 on:
   pull_request:
-    paths: ['.github/actions/publish-release/**', '.github/actions/acr-*/**', '.github/actions/atlas-repository/**', 'tests/test_*.py', '.github/workflows/publish-release-test.yml']
+    paths: ['.github/actions/publish-release/**', '.github/actions/acr-*/**', '.github/actions/atlas-repository/**', 'scripts/foundry_deploy.py', 'tests/test_*.py', '.github/workflows/foundry-deploy.yml', '.github/workflows/publish-release-test.yml']
   push:
     branches: [main]
-    paths: ['.github/actions/publish-release/**', '.github/actions/acr-*/**', '.github/actions/atlas-repository/**', 'tests/test_*.py', '.github/workflows/publish-release-test.yml']
+    paths: ['.github/actions/publish-release/**', '.github/actions/acr-*/**', '.github/actions/atlas-repository/**', 'scripts/foundry_deploy.py', 'tests/test_*.py', '.github/workflows/foundry-deploy.yml', '.github/workflows/publish-release-test.yml']
 
 permissions:
   contents: read
@@ -24,6 +24,6 @@ jobs:
         with:
           version: v3.22.1
 
-      - run: python3 -m pip install PyYAML==6.0.3
+      - run: python3 -m pip install PyYAML==6.0.3 azure-ai-projects==2.7.0 azure-identity==1.27.0 httpx==0.28.1
 
       - run: python3 -B -m unittest discover -s tests -p 'test_*.py' -v
