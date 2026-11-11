@@ -34,6 +34,10 @@ inputs:
     description: Version installed only when azd is absent. Existing compatible installations are reused.
     default: 1.37.3
 
+  image:
+    description: Optional prebuilt image pinned by sha256; azure.yaml references HOSTED_AGENT_IMAGE.
+    default: ''
+
 runs:
   using: composite
   steps:
@@ -81,6 +85,21 @@ runs:
             --location "$AZURE_LOCATION" --no-prompt
         fi
         azd env set "AZURE_SUBSCRIPTION_ID=$AZURE_SUBSCRIPTION_ID" "AZURE_LOCATION=$AZURE_LOCATION" \
+          --environment "$AZURE_ENV_NAME" --no-prompt
+
+    - name: Select prebuilt image when supplied
+      if: inputs.image != ''
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        IMAGE: ${{ inputs.image }}
+        AZURE_ENV_NAME: ${{ inputs.environment }}
+      run: |
+        [[ "$IMAGE" =~ ^[a-z0-9.-]+(:[0-9]+)?/[a-z0-9._/-]+@sha256:[0-9a-f]{64}$ ]] || {
+          echo 'A registry-qualified image pinned by sha256 is required.' >&2
+          exit 1
+        }
+        azd env set "HOSTED_AGENT_IMAGE=$IMAGE" AZD_AGENT_SKIP_ACR=true \
           --environment "$AZURE_ENV_NAME" --no-prompt
 
     - name: Deploy selected Foundry agent

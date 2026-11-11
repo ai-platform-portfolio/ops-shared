@@ -329,6 +329,25 @@ this action does not claim that deployment is implemented. See
 [Atlas privacy](https://atlasgo.io/cli/data-privacy) and
 [offline licensing](https://atlasgo.io/faq/atlas-without-cloud).
 
+## Optional image scan and matrix handoff
+
+The Docker workflow remains one image per invocation. `scan: true` opts into the
+pinned official Trivy action, scanning the published digest and failing on HIGH or
+CRITICAL vulnerabilities. It uses the existing Docker/ACR login. The image has
+already been pushed at this point; a failed scan blocks successful publication
+and the image-record release, rather than claiming the registry contains no
+unscanned image. No signing or application test stage is implied by this option.
+
+`artifact-name` optionally uploads `image.json` after successful publication and
+any requested scan. It contains tagged `image`, immutable `digest`, verified
+`revision` and source `repository`. Existing callers keep both options disabled
+by default. PR build-only runs do not publish records or perform registry scans.
+Use a unique artifact name per matrix item, for example `image-<agent>`. GitHub
+scopes artifacts to the workflow run; overwrite supports rerunning a build job.
+Consumers must download the current run's matching item, verify its source and
+image identity, and deploy by digest. They must not use the last scalar output
+of a build matrix as though it were a per-item digest map.
+
 ## Foundry deployment action
 
 `.github/actions/foundry-deploy` invokes Microsoft's native `azd deploy` for one
@@ -340,11 +359,12 @@ permissions:
   contents: read
   id-token: write
 
-# In a caller job, after checking out the trusted source revision:
+# In a caller job, after checking out source and verifying its image record:
 steps:
   - uses: ai-platform-portfolio/ops-shared/.github/actions/foundry-deploy@<merged-commit-sha>
     with:
       service: researcher
+      image: ${{ steps.image.outputs.image }}
       environment: portfolio
       working-directory: .
       location: ${{ vars.AZURE_LOCATION }}
@@ -374,6 +394,12 @@ For an existing Foundry project, declare an `azure.ai.project` service with its
 agent's source package or prebuilt `image` there. A digest-pinned prebuilt image
 can come from the existing Docker workflow; where a Dockerfile is also present,
 set `AZD_AGENT_SKIP_ACR=true` in the active azd environment to select that image.
+The optional `image` input accepts a registry-qualified `@sha256:` reference and
+sets native `HOSTED_AGENT_IMAGE` and `AZD_AGENT_SKIP_ACR=true` in the selected azd
+environment. Reference `${HOSTED_AGENT_IMAGE}` in the service's native `image`
+field. When retaining a Dockerfile beside that configuration, use native
+`docker.remoteBuild: true` so the core packaging phase does not build locally;
+the prebuilt-image selection then bypasses the agent extension's ACR build.
 This action does not call `azd provision` or `azd up`, and does not introduce its
 own deployment schema, naming hash, version registry or image build.
 
@@ -385,8 +411,8 @@ Do not treat activation alone as application acceptance. Native hosted-agent
 identity/RBAC handling still requires the permissions documented by Microsoft.
 
 The previous custom publisher tests and Azure SDK CI dependencies are removed.
-No live deployment is established by this change. The open catalog PR17 still
-references the superseded workflow and needs revised wiring before merge.
+No live deployment is established by this change. Catalog PR17 demonstrates a
+single-workflow build-matrix to deploy-matrix handoff for prebuilt images.
 
 References: [Microsoft CI/CD guidance](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/set-up-ci-cd-cli),
 [native configuration](https://learn.microsoft.com/en-us/azure/foundry/agents/concepts/azure-yaml-reference),
