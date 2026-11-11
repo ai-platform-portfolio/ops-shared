@@ -332,6 +332,11 @@ this action does not claim that deployment is implemented. See
 
 ## Foundry hosted-agent deployment
 
+Shared workflow templates stay flat: one capability and one item per invocation.
+`docker.yml` builds one image; `foundry-deploy.yml` handles one agent. Consuming
+repositories own directory discovery, matrices, job dependencies and concurrency;
+shared templates do not loop over agents or compose the build/deploy pipeline.
+
 Call `.github/workflows/foundry-deploy.yml` after the existing Docker workflow.
 Pass its `image`, `digest` and `revision` outputs, a logical `agent` name,
 caller-relative `configuration` and `smoke-file` paths, and the operator-provided

@@ -1,5 +1,7 @@
 name: Deploy Foundry agent
 
+# One agent per call; the consuming repository owns matrices, ordering and concurrency.
+
 on:
   workflow_call:
     inputs:
