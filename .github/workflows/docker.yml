@@ -33,6 +33,16 @@ on:
         type: boolean
         default: false
 
+      scan:
+        description: Block publication success on HIGH or CRITICAL image vulnerabilities after pushing.
+        type: boolean
+        default: false
+
+      artifact-name:
+        description: Optional unique artifact name for the published image/digest/revision record.
+        type: string
+        default: ''
+
     outputs:
       image:
         description: Full image reference with tag.
@@ -173,3 +183,37 @@ jobs:
             org.opencontainers.image.revision=${{ steps.source.outputs.revision }}
           cache-from: type=gha,scope=${{ inputs.image }}
           cache-to: type=gha,scope=${{ inputs.image }},mode=max
+
+      - name: Scan published digest before releasing the image record
+        if: env.PUBLISH == 'true' && inputs.scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: localacrk8s.azurecr.io/${{ inputs.image }}@${{ steps.build.outputs.digest }}
+          version: v0.76.2
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          format: table
+
+      - name: Record published image identity
+        if: env.PUBLISH == 'true' && inputs.artifact-name != ''
+        shell: bash
+        env:
+          IMAGE: ${{ steps.image-tag.outputs.image }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          REVISION: ${{ steps.source.outputs.revision }}
+        run: |
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo 'Published digest is missing.' >&2; exit 1; }
+          jq -n --arg image "$IMAGE" --arg digest "$DIGEST" --arg revision "$REVISION" \
+            --arg repository "$GITHUB_REPOSITORY" \
+            '{image: $image, digest: $digest, revision: $revision, repository: $repository}' \
+            > "$RUNNER_TEMP/image.json"
+
+      - name: Upload image record
+        if: env.PUBLISH == 'true' && inputs.artifact-name != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: ${{ runner.temp }}/image.json
+          if-no-files-found: error
+          overwrite: true
