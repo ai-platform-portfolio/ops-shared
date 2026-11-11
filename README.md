@@ -329,70 +329,65 @@ this action does not claim that deployment is implemented. See
 [Atlas privacy](https://atlasgo.io/cli/data-privacy) and
 [offline licensing](https://atlasgo.io/faq/atlas-without-cloud).
 
+## Foundry deployment action
 
-## Foundry hosted-agent deployment
+`.github/actions/foundry-deploy` invokes Microsoft's native `azd deploy` for one
+agent service. It replaces the custom Python publisher and deployment workflow
+introduced by PR13. The existing Docker workflow is unchanged.
 
-Shared workflow templates stay flat: one capability and one item per invocation.
-`docker.yml` builds one image; `foundry-deploy.yml` handles one agent. Consuming
-repositories own directory discovery, matrices, job dependencies and concurrency;
-shared templates do not loop over agents or compose the build/deploy pipeline.
+```yaml
+permissions:
+  contents: read
+  id-token: write
 
-Call `.github/workflows/foundry-deploy.yml` after the existing Docker workflow.
-Pass its `image`, `digest` and `revision` outputs, a logical `agent` name,
-caller-relative `configuration` and `smoke-file` paths, and the operator-provided
-`project-endpoint`. Use `deploy: false` on PRs to validate without Azure login;
-only current main pushes/manual main runs may deploy. The caller supplies
-`contents: read`, `id-token: write` and the existing `AZURE_CLIENT_ID`,
-`AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` secrets for native OIDC authentication.
-A published image digest and a current main revision are required before login.
-The workflow fetches its helper at an immutable reviewed commit, checks out the
-exact caller source, and uses pinned official Azure SDK packages. It creates no
-Azure identity, permission, registry, network or Kubernetes resource.
-
-Minimal configuration is `{"model_deployment":"chat"}`. Optional fields are
-`protocol` (`invocations` by default, or `responses`), `cpu` (`"1"`), `memory`
-(`"2Gi"`) and `environment_variables` (a string map). The workflow owns model and
-project endpoint environment wiring. Keep secret values out of configuration;
-reference Foundry project connections or use agent identity instead.
-
-The smoke file contains `request` and a nonempty `expect` object. Expected fields
-are checked recursively as subsets, with exact array/scalar equality; Responses
-must also complete successfully. For example:
-
-```json
-{"request":{"message":"health"},"expect":{"status":"ok"}}
+# In a caller job, after checking out the trusted source revision:
+steps:
+  - uses: ai-platform-portfolio/ops-shared/.github/actions/foundry-deploy@<merged-commit-sha>
+    with:
+      service: researcher
+      environment: portfolio
+      working-directory: .
+      location: ${{ vars.AZURE_LOCATION }}
+      client-id: ${{ secrets.AZURE_CLIENT_ID }}
+      tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+      subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+    env:
+      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
 ```
 
-The caller must serialize publication for each repository/agent. For a matrix,
-call a thin per-agent reusable workflow containing both the Docker and Foundry
-jobs: each invocation then retains its own digest, rather than consuming the
-last output of a build matrix. The catalog provides that caller pattern.
+The action reuses `azd` from PATH and skips installation when present. Otherwise,
+the pinned Microsoft setup action installs version 1.37.3; `azd-version` overrides
+that installation version. An existing installation must support the pinned
+Foundry agent extension 1.0.0 (azd 1.37.0 or later). Azure CLI `az` is a separate
+tool and does not satisfy this check. Native extension installation handles an
+already-installed extension; no custom SDK or Python dependencies are installed.
 
-Foundry names combine the logical agent name with a stable hash of repository
-identity and agent. Versions record source repository, revision, digest and
-configuration hash. An exact retry reuses the version; a conflicting artifact
-for the same revision fails. First deployment tests a version-specific session
-and pins that sole version. Later deployments require a pinned serving route,
-verify the candidate in a separate pinned session, and preserve the serving
-selector. Outputs are `agent-name`, `agent-version`, digest-pinned `image` and
-`revision`; validation-only runs leave deployment outputs empty. Failed tests do
-not promote a candidate, and smoke compute is stopped in a cleanup block.
+Authentication uses native GitHub OIDC, with the existing organization ID secrets;
+there is no client secret. The action selects or creates the runner-local azd
+environment under `.azure/`, refreshes its subscription/location from the inputs,
+and invokes only the selected service. Keep `.azure/` out of Git and use distinct
+environment names for distinct deployment targets.
 
-The helper uses the official SDK for version/session/routing operations and
-HTTPX for protocol invocation. Readiness checks are bounded to ten minutes;
-these are operation-completion checks, not continuous deployment polling.
-Promotion, rollback and deletion remain explicit operator operations. The initial
-version is reachable through the default endpoint while first-deployment smoke
-runs; there is no existing production version to preserve. Initial pinning is
-limited to the exact sole version, and an interrupted initial run can resume only
-that same artifact. Coordinate external API/portal writers: route readback and
-GitHub concurrency are not a cross-client atomic lock.
+The caller supplies native `azure.yaml` and any referenced environment values.
+For an existing Foundry project, declare an `azure.ai.project` service with its
+`endpoint` set and reference it from the agent service using `uses`. Configure the
+agent's source package or prebuilt `image` there. A digest-pinned prebuilt image
+can come from the existing Docker workflow; where a Dockerfile is also present,
+set `AZD_AGENT_SKIP_ACR=true` in the active azd environment to select that image.
+This action does not call `azd provision` or `azd up`, and does not introduce its
+own deployment schema, naming hash, version registry or image build.
 
-The deploying identity needs Foundry deployment permission; the Foundry image-pull
-identity separately needs ACR access. This workflow does not reconcile those roles.
-Configuration/unit tests do not establish OIDC, image-pull or live model access.
-The current catalog is empty, so those checks remain a first-agent acceptance gate.
+Callers own triggers, trusted-source and revision checks, matrices, concurrency,
+release approvals and application smoke tests. Native `azd deploy` waits for
+activation and applies the endpoint configuration in `azure.yaml`; preserve a
+pinned production selector when deploying candidates and promote explicitly.
+Do not treat activation alone as application acceptance. Native hosted-agent
+identity/RBAC handling still requires the permissions documented by Microsoft.
 
-References: [deploy hosted agents](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/deploy-hosted-agent),
-[pin and test candidates](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/manage-hosted-agent),
-[official SDK operations](https://learn.microsoft.com/en-us/python/api/azure-ai-projects/azure.ai.projects.operations.agentsoperations).
+The previous custom publisher tests and Azure SDK CI dependencies are removed.
+No live deployment is established by this change. The open catalog PR17 still
+references the superseded workflow and needs revised wiring before merge.
+
+References: [Microsoft CI/CD guidance](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/set-up-ci-cd-cli),
+[native configuration](https://learn.microsoft.com/en-us/azure/foundry/agents/concepts/azure-yaml-reference),
+[prebuilt images](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/deploy-hosted-agent-private-azure-container-registry).
