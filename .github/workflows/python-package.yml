@@ -94,7 +94,7 @@ jobs:
         run: |
           python3 - <<'PY'
           from email.parser import BytesParser
-          import hashlib, json, os, re, subprocess, zipfile
+          import hashlib, os, re, subprocess, zipfile
           from pathlib import Path
           root = Path(os.environ['RUNNER_TEMP']) / 'python-package'
           wheels = list(root.glob('*.whl'))
@@ -109,8 +109,6 @@ jobs:
           version = fields['Version']
           assert re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9.!+_-]*', version)
           digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
-          record = dict(name=fields['Name'], version=version, wheel=wheel.name, sha256=digest, revision=revision)
-          (root / 'python-package.json').write_text(json.dumps(record, indent=2) + '\n')
           (root / 'SHA256SUMS').write_text(f'{digest}  {wheel.name}\n')
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
               output.write(f'wheel={wheel.name}\nsha256={digest}\nversion={version}\nrevision={revision}\n')
@@ -144,21 +142,29 @@ jobs:
           name: ${{ inputs.artifact-name }}
           path: ${{ runner.temp }}/python-package
 
-      - name: Check out the pinned publication script
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with:
-          repository: ai-platform-portfolio/ops-shared
-          ref: 03727a9f822ee4a73d894a7ddcdf8e240dabc2b2
-          path: .ops-shared-python-package
-          persist-credentials: false
-
-      - name: Publish verified wheel without overwriting releases
+      - name: Publish with native Git and GitHub CLI
         id: publish
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_SHA: ${{ needs.build.outputs.revision }}
           EXPECTED_SHA256: ${{ needs.build.outputs.sha256 }}
+          WHEEL: ${{ needs.build.outputs.wheel }}
+          VERSION: ${{ needs.build.outputs.version }}
           RELEASE_PREFIX: ${{ inputs.release-prefix }}
           ARTIFACT_DIRECTORY: ${{ runner.temp }}/python-package
         run: |
-          bash .ops-shared-python-package/scripts/python-package.sh
+          [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]] || exit 1
+          [[ "$(sha256sum "$ARTIFACT_DIRECTORY/$WHEEL" | cut -d' ' -f1)" == "$EXPECTED_SHA256" ]] || exit 1
+          (cd "$ARTIFACT_DIRECTORY" && sha256sum --check SHA256SUMS)
+
+          tag="$RELEASE_PREFIX$VERSION"
+          [[ "$tag" != -* ]] || exit 1
+          git check-ref-format "refs/tags/$tag"
+          gh auth setup-git --hostname github.com
+          # A non-forcing push refuses a tag already pointing at another source.
+          git push origin "$SOURCE_SHA:refs/tags/$tag"
+          gh release create "$tag" "$ARTIFACT_DIRECTORY/$WHEEL" "$ARTIFACT_DIRECTORY/SHA256SUMS" \
+            --repo "$GITHUB_REPOSITORY" --target "$SOURCE_SHA" --verify-tag \
+            --title "$tag" --notes "Python wheel built from source commit $SOURCE_SHA. SHA256 is attached."
+          encoded=$(jq -rn --arg tag "$tag" '$tag | @uri')
+          echo "url=https://github.com/$GITHUB_REPOSITORY/releases/download/$encoded/$WHEEL" >> "$GITHUB_OUTPUT"

@@ -61,9 +61,9 @@ package:
     contents: write
   uses: ai-platform-portfolio/ops-shared/.github/workflows/python-package.yml@<merged-commit-sha>
   with:
-    package-directory: agents/observability
+    package-directory: observability
     revision: ${{ github.event.pull_request.head.sha || github.sha }}
-    release-prefix: agent-observability-v
+    release-prefix: observability-v
     publish: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish }}
 ```
 
@@ -71,20 +71,17 @@ Native `pip wheel --no-deps` builds the caller's pyproject.toml with its declare
 build backend. The checked-out commit timestamp becomes SOURCE_DATE_EPOCH.
 Python setup is skipped when the requested minor/full version is already present.
 Outputs are `wheel`, `version`, `sha256`, and published `url` (empty for build-only).
-The build artifact contains the wheel, SHA256SUMS and source/package identity JSON.
+The build artifact contains the wheel and SHA256SUMS; the release records its source commit.
 
 The read-only build and write-enabled publication use separate runners. PR events
-cannot publish. The publisher verifies source/hash and existing tag identity,
-uploads to a draft release without clobbering, then publishes after assets are
-complete. Identical retries verify and reuse existing bytes; differing artifacts
-fail rather than overwrite a release. No PyPI registry, GHCR layer, stored PAT or
-Azure identity is needed. Repositories can enable GitHub immutable releases for
-additional server-side protection; this workflow does not change repository settings.
-Private release assets need consumer authentication; public wheels can be pinned
-by HTTPS URL/SHA256 in requirements.txt with hash/binary-only installs.
-
-When changing scripts/python-package.sh, update this workflow's script checkout
-pin to the commit containing it, matching the existing shared-workflow convention.
+cannot publish. Publication checks the source/hash, pushes a tag without force,
+and calls native `gh release create --verify-tag`. Git refuses a conflicting tag;
+GitHub CLI refuses an existing release. No clobber, custom retry/recovery script,
+extra script checkout or private release-record format is added. GitHub CLI owns
+asset staging and upload cleanup. Failed operations surface native errors.
+No PyPI registry, GHCR layer, stored PAT or Azure identity is needed. Private
+release assets require consumer authentication; public wheels can be pinned by
+HTTPS URL/SHA256 in requirements.txt with hash/binary-only installs.
 
 ## Azure registry building blocks
 
