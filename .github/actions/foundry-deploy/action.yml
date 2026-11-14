@@ -38,6 +38,31 @@ inputs:
     description: Optional prebuilt image pinned by sha256; azure.yaml references HOSTED_AGENT_IMAGE.
     default: ''
 
+  preserve-serving-version:
+    description: Pin the existing single serving version before deploying a candidate. Reject split routes.
+    default: 'false'
+
+  source-revision:
+    description: Source commit recorded in the agent runtime environment.
+    default: ${{ github.sha }}
+
+  traces-endpoint:
+    description: Optional OTLP HTTP traces URL. Empty disables this collector export.
+    default: ''
+
+outputs:
+  version:
+    description: Actual ready candidate version, verified against the supplied image.
+    value: ${{ steps.release.outputs.version }}
+
+  serving-version:
+    description: Previously serving version preserved during candidate deployment; empty on first release.
+    value: ${{ steps.prepare.outputs.serving-version }}
+
+  record:
+    description: Local path to the verified release record for caller-owned acceptance and publication.
+    value: ${{ steps.release.outputs.record }}
+
 runs:
   using: composite
   steps:
@@ -102,6 +127,35 @@ runs:
         azd env set "HOSTED_AGENT_IMAGE=$IMAGE" AZD_AGENT_SKIP_ACR=true \
           --environment "$AZURE_ENV_NAME" --no-prompt
 
+    - name: Configure release metadata and optional tracing
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        SOURCE_REVISION: ${{ inputs.source-revision }}
+        IMAGE: ${{ inputs.image }}
+        TRACES_ENDPOINT: ${{ inputs.traces-endpoint }}
+        AZURE_ENV_NAME: ${{ inputs.environment }}
+      run: |
+        : "${FOUNDRY_PROJECT_ENDPOINT:?Existing project endpoint is required}"
+        azd env set "SOURCE_REVISION=$SOURCE_REVISION" "RELEASE_IMAGE=$IMAGE" \
+          "AGENT_TRACES_ENDPOINT=$TRACES_ENDPOINT" "FOUNDRY_PROJECT_ENDPOINT=$FOUNDRY_PROJECT_ENDPOINT" \
+          --environment "$AZURE_ENV_NAME" --no-prompt
+
+    - name: Ensure YAML support for native configuration edits
+      shell: bash
+      run: |
+        python3 -c 'import yaml' 2>/dev/null || python3 -m pip install --disable-pip-version-check 'PyYAML==6.0.3'
+
+    - name: Prepare native agent identity and preserve serving route
+      id: prepare
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        SERVICE: ${{ inputs.service }}
+        AZURE_ENV_NAME: ${{ inputs.environment }}
+        PRESERVE_SERVING_VERSION: ${{ inputs.preserve-serving-version }}
+      run: python3 "${{ github.action_path }}/release.py" prepare "$SERVICE"
+
     - name: Deploy selected Foundry agent
       shell: bash
       working-directory: ${{ inputs.working-directory }}
@@ -111,3 +165,14 @@ runs:
       run: |
         : "${SERVICE:?service is required}" "${AZURE_ENV_NAME:?environment is required}"
         azd deploy --environment "$AZURE_ENV_NAME" --no-prompt -- "$SERVICE"
+
+    - name: Read back candidate identity
+      id: release
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        SERVICE: ${{ inputs.service }}
+        AZURE_ENV_NAME: ${{ inputs.environment }}
+        IMAGE: ${{ inputs.image }}
+        SOURCE_REVISION: ${{ inputs.source-revision }}
+      run: python3 "${{ github.action_path }}/release.py" record "$SERVICE"
