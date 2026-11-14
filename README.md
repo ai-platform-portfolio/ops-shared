@@ -414,7 +414,9 @@ the pinned Microsoft setup action installs version 1.37.3; `azd-version` overrid
 that installation version. An existing installation must support the pinned
 Foundry agent extension 1.0.0 (azd 1.37.0 or later). Azure CLI `az` is a separate
 tool and does not satisfy this check. Native extension installation handles an
-already-installed extension; no custom SDK or Python dependencies are installed.
+already-installed extension. The small native JSON/YAML adapter uses Python3 and
+PyYAML (reuses the runner installation; installs pinned6.0.3 only when absent).
+It does not call a custom Azure SDK publisher or Azure REST deployment API.
 
 Authentication uses native GitHub OIDC, with the existing organization ID secrets;
 there is no client secret. The action selects or creates the runner-local azd
@@ -436,6 +438,32 @@ field. When retaining a Dockerfile beside that configuration, use native
 the prebuilt-image selection then bypasses the agent extension's ACR build.
 This action does not call `azd provision` or `azd up`, and does not introduce its
 own deployment schema, naming hash, version registry or image build.
+
+Keep service `name: ${AZURE_ENV_NAME}` for stable caller-derived identity. The
+pinned extension validates agent names before expanding that field, so the action
+materializes it in the runner checkout before invoking azd. An explicit name must
+match the environment input. Native azure.yaml retains ownership of the definition.
+
+The service environment must reference `${SOURCE_REVISION}` and `${RELEASE_IMAGE}`
+for those two runtime fields. Reference `${AGENT_TRACES_ENDPOINT}` as
+`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` for optional collector export. The action sets
+these azd values from `source-revision` (default caller SHA), `image` and optional
+`traces-endpoint` (default empty), plus the existing project endpoint. No AKS/org
+telemetry variable or Langfuse credential is required.
+
+Optional `preserve-serving-version: 'true'` pins the existing single100% numeric
+serving route before deployment and verifies readback. Unpinned, split or changed
+protocol/authentication configurations fail closed for explicit operator review.
+Only an explicit404 permits the first-release bootstrap. There is no old serving
+version on that first deployment: the native endpoint can route to the initial
+candidate before acceptance, so do not distribute it until evaluation/review passes.
+The caller must then promote/pin that version before another candidate deployment.
+
+Outputs `version`, `serving-version` and `record` expose the actual ready candidate,
+previous route and a local JSON artifact path. Readback checks the native version's
+image and source revision. Callers own uploading the record, invoking that exact
+version and explicitly promoting/rolling back. Deployment activation is not a
+quality assessment. No shared matrix, test dataset or promotion workflow is added.
 
 Callers own triggers, trusted-source and revision checks, matrices, concurrency,
 release approvals and application smoke tests. Native `azd deploy` waits for
