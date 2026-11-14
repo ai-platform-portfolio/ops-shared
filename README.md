@@ -312,8 +312,9 @@ publishes them. Apply this guidance when creating or reviewing an image:
   tests and pinned dependencies do not establish a clean vulnerability scan.
 
 These recommendations are not all enforced by `docker.yml`. With `scan: true`,
-the current workflow scans **after pushing** and blocks release of the image
-record on HIGH/CRITICAL findings. Build-only PRs do not run that scan. See
+the workflow scans build-only images locally and published images by digest
+**after pushing**. HIGH/CRITICAL findings fail either path and prevent release
+of a published image record. Build-only scans need no Azure login. See
 [image scan and matrix handoff](#optional-image-scan-and-matrix-handoff).
 
 References: [Docker build guidance](https://docs.docker.com/build/building/best-practices/)
@@ -364,16 +365,17 @@ this action does not claim that deployment is implemented. See
 ## Optional image scan and matrix handoff
 
 The Docker workflow remains one image per invocation. `scan: true` opts into the
-pinned official Trivy action, scanning the published digest and failing on HIGH or
-CRITICAL vulnerabilities. It uses the existing Docker/ACR login. The image has
-already been pushed at this point; a failed scan blocks successful publication
-and the image-record release, rather than claiming the registry contains no
-unscanned image. No signing or application test stage is implied by this option.
+pinned official Trivy action and fails on HIGH or CRITICAL vulnerabilities.
+Build-only runs load the single image into the runner's local Docker engine and
+scan its generated tag, without Azure authentication or a push. Publishing runs
+scan the immutable registry digest using the existing Docker/ACR login. That image
+has already been pushed; a failed scan blocks successful publication and the
+image-record release. No signing or application test stage is implied by this option.
 
 `artifact-name` optionally uploads `image.json` after successful publication and
 any requested scan. It contains tagged `image`, immutable `digest`, verified
 `revision` and source `repository`. Existing callers keep both options disabled
-by default. PR build-only runs do not publish records or perform registry scans.
+by default. PR build-only runs do not publish records; optional scans use the local image.
 Use a unique artifact name per matrix item, for example `image-<agent>`. GitHub
 scopes artifacts to the workflow run; overwrite supports rerunning a build job.
 Consumers must download the current run's matching item, verify its source and

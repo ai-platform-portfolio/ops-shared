@@ -34,7 +34,7 @@ on:
         default: false
 
       scan:
-        description: Block publication success on HIGH or CRITICAL image vulnerabilities after pushing.
+        description: Block build or publication success on HIGH or CRITICAL image vulnerabilities.
         type: boolean
         default: false
 
@@ -177,6 +177,7 @@ jobs:
           context: ${{ inputs.context }}
           file: ${{ inputs.file }}
           push: ${{ env.PUBLISH == 'true' }}
+          load: ${{ env.PUBLISH != 'true' && inputs.scan }}
           tags: ${{ steps.image-tag.outputs.image }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
@@ -184,11 +185,11 @@ jobs:
           cache-from: type=gha,scope=${{ inputs.image }}
           cache-to: type=gha,scope=${{ inputs.image }},mode=max
 
-      - name: Scan published digest before releasing the image record
-        if: env.PUBLISH == 'true' && inputs.scan
+      - name: Scan image before releasing the build
+        if: inputs.scan
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: localacrk8s.azurecr.io/${{ inputs.image }}@${{ steps.build.outputs.digest }}
+          image-ref: ${{ env.PUBLISH == 'true' && format('localacrk8s.azurecr.io/{0}@{1}', inputs.image, steps.build.outputs.digest) || steps.image-tag.outputs.image }}
           version: v0.76.2
           scanners: vuln
           severity: HIGH,CRITICAL
