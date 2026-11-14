@@ -83,7 +83,7 @@ jobs:
 
     outputs:
       image: ${{ steps.image-tag.outputs.image }}
-      digest: ${{ steps.build.outputs.digest }}
+      digest: ${{ env.PUBLISH == 'true' && steps.build.outputs.digest || '' }}
       revision: ${{ steps.source.outputs.revision }}
 
     env:
