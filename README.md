@@ -527,8 +527,9 @@ selects an explicit numeric version (or the single fixed serving version), and
 opens a new session. Callers own events, dependencies, policy, artifacts and
 repetition. It contains no AKS configuration or model/tool implementation.
 
-`github-app-token` composes native Azure login, reading an existing Key Vault App
-key, and the official GitHub installation-token action. The caller selects one
+`github-app-token` reads an existing Key Vault App key and calls the official
+GitHub installation-token action. The caller first authenticates Azure CLI with
+the existing native OIDC login; the action does not log in again. The caller selects one
 repository and explicit permissions. Keys stay in masked step outputs; tokens are
 revoked at job end. This reuses an existing App PEM because the current native
 GitHub token action requires it; it does not create another key or establish
