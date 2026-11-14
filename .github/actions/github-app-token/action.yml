@@ -1,0 +1,48 @@
+name: Scoped GitHub App token
+description: Requires Azure CLI authentication; reuse an existing Vault key and the official token action.
+inputs:
+  vault-name:
+    description: Existing Key Vault containing the App key.
+    required: true
+  key-name:
+    description: Existing private-key secret name; no new key is created.
+    required: true
+  app-id:
+    description: Existing GitHub App numeric identity.
+    required: true
+  owner:
+    description: Repository owner.
+    required: true
+  repository:
+    description: One repository name, without its owner.
+    required: true
+  contents:
+    description: Explicit contents permission (read or write).
+    default: read
+  pull-requests:
+    description: Explicit pull request permission; empty omits it.
+    default: ''
+outputs:
+  token:
+    description: Short-lived, repository-scoped installation token; revoked at job end.
+    value: ${{ steps.token.outputs.token }}
+runs:
+  using: composite
+  steps:
+    - name: Read the existing App key without logging it
+      id: key
+      shell: bash
+      env:
+        VAULT_NAME: ${{ inputs.vault-name }}
+        KEY_NAME: ${{ inputs.key-name }}
+      run: python3 "${{ github.action_path }}/key.py"
+
+    - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+      id: token
+      with:
+        app-id: ${{ inputs.app-id }}
+        private-key: ${{ steps.key.outputs.pem }}
+        owner: ${{ inputs.owner }}
+        repositories: ${{ inputs.repository }}
+        permission-contents: ${{ inputs.contents }}
+        permission-pull-requests: ${{ inputs.pull-requests }}

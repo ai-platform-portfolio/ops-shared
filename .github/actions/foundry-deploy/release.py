@@ -5,13 +5,22 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 
 import yaml
 
 
 def azd(*arguments):
-    return subprocess.run(['azd', *arguments, '-e', os.environ['AZURE_ENV_NAME'], '--no-prompt'],
-                          check=True, capture_output=True, text=True).stdout
+    result = subprocess.run(['azd', *arguments, '-e', os.environ['AZURE_ENV_NAME'], '--no-prompt'],
+                            capture_output=True, text=True, timeout=180)
+    if result.returncode:
+        # Native CLI errors contain the actionable status/code. GitHub masks the
+        # caller's registered secrets; redact identity IDs as well before logging.
+        diagnostic = re.sub(r'(?i)\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b',
+                            '[redacted-id]', result.stderr + result.stdout)
+        print(diagnostic, file=sys.stderr)
+        result.check_returncode()
+    return result.stdout
 
 
 def endpoint_contract(endpoint):
@@ -39,7 +48,7 @@ def prepare(service):
         current = json.loads(azd('ai', 'agent', 'endpoint', 'show', service, '--output', 'json'))
     except subprocess.CalledProcessError as error:
         # Only an explicit missing agent permits the first-release bootstrap.
-        if not re.search(r'\b404\b|\bAgentNotFound\b', error.stderr):
+        if not re.search(r'\b404\b|\bAgentNotFound\b', (error.stderr or '') + (error.stdout or '')):
             raise
         print('First release: no existing serving version to preserve.')
         return
@@ -82,6 +91,7 @@ def record(service):
         raise ValueError('Deployed source revision does not match the release')
     record = {'agent': current['name'], 'version': version, 'image': image,
               'source_revision': os.environ['SOURCE_REVISION'],
+              'instance_principal_id': (current.get('instance_identity') or {}).get('principal_id'),
               'endpoints': current.get('agent_endpoints', {})}
     target = Path(os.environ['RUNNER_TEMP']) / 'foundry-release.json'
     target.write_text(json.dumps(record, indent=2))

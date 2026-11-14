@@ -1,6 +1,7 @@
 """Fail-closed release boundaries around native azd, without Azure mutations."""
 import copy
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -56,6 +57,27 @@ class FoundryReleaseTests(unittest.TestCase):
         with patch.object(release, 'azd', side_effect=subprocess.CalledProcessError(1, 'azd', stderr='HTTP 403')):
             with self.assertRaises(subprocess.CalledProcessError):
                 release.prepare('helper')
+
+    def test_native_error_on_stdout_allows_only_explicit_missing_agent(self):
+        for message in ('HTTP 404: AgentNotFound', 'HTTP 403: Forbidden'):
+            error = subprocess.CalledProcessError(1, 'azd', output=message, stderr='')
+            with patch.object(release, 'azd', side_effect=error):
+                if '404' in message:
+                    release.prepare('helper')
+                else:
+                    with self.assertRaises(subprocess.CalledProcessError):
+                        release.prepare('helper')
+
+    def test_cli_failure_surfaces_status_without_identity_ids(self):
+        result = subprocess.CompletedProcess(['azd'], 1,
+            'HTTP 403: Forbidden for 12345678-1234-1234-1234-123456789abc', '')
+        diagnostic = io.StringIO()
+        with patch.object(release.subprocess, 'run', return_value=result), patch('sys.stderr', diagnostic):
+            with self.assertRaises(subprocess.CalledProcessError):
+                release.azd('ai', 'agent', 'show', 'helper')
+        self.assertIn('HTTP 403', diagnostic.getvalue())
+        self.assertIn('[redacted-id]', diagnostic.getvalue())
+        self.assertNotIn('12345678-', diagnostic.getvalue())
 
     def test_unpinned_split_or_different_auth_route_is_not_overwritten(self):
         for change in ('unpinned', 'split', 'auth'):

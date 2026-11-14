@@ -518,3 +518,19 @@ single-workflow build-matrix to deploy-matrix handoff for prebuilt images.
 References: [Microsoft CI/CD guidance](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/set-up-ci-cd-cli),
 [native configuration](https://learn.microsoft.com/en-us/azure/foundry/agents/concepts/azure-yaml-reference),
 [prebuilt images](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/deploy-hosted-agent-private-azure-container-registry).
+
+### Foundry incident capabilities
+
+`foundry-invoke` is a scalar action: one native agent invocation and one JSON
+response. It installs azd only when absent, uses the existing Azure OIDC contract,
+selects an explicit numeric version (or the single fixed serving version), and
+opens a new session. Callers own events, dependencies, policy, artifacts and
+repetition. It contains no AKS configuration or model/tool implementation.
+
+`github-app-token` reads an existing Key Vault App key and calls the official
+GitHub installation-token action. The caller first authenticates Azure CLI with
+the existing native OIDC login; the action does not log in again. The caller selects one
+repository and explicit permissions. Keys stay in masked step outputs; tokens are
+revoked at job end. This reuses an existing App PEM because the current native
+GitHub token action requires it; it does not create another key or establish
+keyless GitHub federation. Never run untrusted repository code in that job.
