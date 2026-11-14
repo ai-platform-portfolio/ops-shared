@@ -1,0 +1,164 @@
+name: Build or publish one Python wheel
+
+on:
+  workflow_call:
+    inputs:
+      package-directory:
+        description: Caller-relative directory containing pyproject.toml.
+        required: true
+        type: string
+
+      revision:
+        description: Full caller source commit to build; defaults to the event revision.
+        type: string
+        default: ''
+
+      python-version:
+        type: string
+        default: '3.12'
+
+      publish:
+        description: Publish a GitHub release after caller-owned tests/trust checks. PR events cannot publish.
+        type: boolean
+        default: false
+
+      release-prefix:
+        description: Release tag prefix; the wheel metadata supplies the version.
+        type: string
+        default: v
+
+      artifact-name:
+        description: Caller chooses a distinct name when composing several package builds.
+        type: string
+        default: python-wheel
+
+    outputs:
+      wheel:
+        value: ${{ jobs.build.outputs.wheel }}
+      sha256:
+        value: ${{ jobs.build.outputs.sha256 }}
+      version:
+        value: ${{ jobs.build.outputs.version }}
+      url:
+        description: Published wheel URL; empty for build-only calls.
+        value: ${{ jobs.publish.outputs.url }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+
+    outputs:
+      wheel: ${{ steps.record.outputs.wheel }}
+      sha256: ${{ steps.record.outputs.sha256 }}
+      version: ${{ steps.record.outputs.version }}
+      revision: ${{ steps.record.outputs.revision }}
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.revision || github.sha }}
+          persist-credentials: false
+
+      - name: Check Python version
+        id: python
+        env:
+          REQUESTED_PYTHON: ${{ inputs.python-version }}
+        run: |
+          if command -v python3 >/dev/null && python3 -c 'import os,sys; wanted=os.environ["REQUESTED_PYTHON"]; current=sys.version.split()[0]; assert current == wanted or current.startswith(wanted + ".")'; then
+            echo 'installed=true' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install Python when needed
+        if: steps.python.outputs.installed != 'true'
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      - name: Build wheel with native pip
+        env:
+          PACKAGE: ${{ inputs.package-directory }}
+        run: |
+          export SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)
+          python3 -m pip wheel --no-deps --wheel-dir "$RUNNER_TEMP/python-package" "./$PACKAGE"
+
+      - name: Record wheel identity
+        id: record
+        env:
+          SOURCE_SHA: ${{ inputs.revision || github.sha }}
+        run: |
+          python3 - <<'PY'
+          from email.parser import BytesParser
+          import hashlib, json, os, re, subprocess, zipfile
+          from pathlib import Path
+          root = Path(os.environ['RUNNER_TEMP']) / 'python-package'
+          wheels = list(root.glob('*.whl'))
+          assert len(wheels) == 1, 'Build exactly one package per invocation'
+          wheel = wheels[0]
+          with zipfile.ZipFile(wheel) as archive:
+              metadata = [n for n in archive.namelist() if n.endswith('.dist-info/METADATA')]
+              assert len(metadata) == 1
+              fields = BytesParser().parsebytes(archive.read(metadata[0]))
+          revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          assert revision == os.environ['SOURCE_SHA'], 'Source must be a full checked-out commit SHA'
+          version = fields['Version']
+          assert re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9.!+_-]*', version)
+          digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
+          record = dict(name=fields['Name'], version=version, wheel=wheel.name, sha256=digest, revision=revision)
+          (root / 'python-package.json').write_text(json.dumps(record, indent=2) + '\n')
+          (root / 'SHA256SUMS').write_text(f'{digest}  {wheel.name}\n')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'wheel={wheel.name}\nsha256={digest}\nversion={version}\nrevision={revision}\n')
+          PY
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: ${{ runner.temp }}/python-package
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    if: inputs.publish && !startsWith(github.event_name, 'pull_request')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+
+    outputs:
+      url: ${{ steps.publish.outputs.url }}
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.revision || github.sha }}
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: ${{ runner.temp }}/python-package
+
+      - name: Check out the pinned publication script
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ai-platform-portfolio/ops-shared
+          ref: 03727a9f822ee4a73d894a7ddcdf8e240dabc2b2
+          path: .ops-shared-python-package
+          persist-credentials: false
+
+      - name: Publish verified wheel without overwriting releases
+        id: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ needs.build.outputs.revision }}
+          EXPECTED_SHA256: ${{ needs.build.outputs.sha256 }}
+          RELEASE_PREFIX: ${{ inputs.release-prefix }}
+          ARTIFACT_DIRECTORY: ${{ runner.temp }}/python-package
+        run: |
+          bash .ops-shared-python-package/scripts/python-package.sh

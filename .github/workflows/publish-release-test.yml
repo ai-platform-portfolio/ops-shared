@@ -2,10 +2,10 @@ name: Test release publication actions
 
 on:
   pull_request:
-    paths: ['.github/actions/publish-release/**', '.github/actions/acr-*/**', '.github/actions/atlas-repository/**', '.github/actions/foundry-deploy/**', 'tests/test_*.py', '.github/workflows/docker.yml', '.github/workflows/publish-release-test.yml']
+    paths: ['.github/actions/publish-release/**', '.github/actions/acr-*/**', '.github/actions/atlas-repository/**', '.github/actions/foundry-deploy/**', 'tests/test_*.py', 'scripts/python-package.sh', '.github/workflows/python-package.yml', '.github/workflows/docker.yml', '.github/workflows/publish-release-test.yml']
   push:
     branches: [main]
-    paths: ['.github/actions/publish-release/**', '.github/actions/acr-*/**', '.github/actions/atlas-repository/**', '.github/actions/foundry-deploy/**', 'tests/test_*.py', '.github/workflows/docker.yml', '.github/workflows/publish-release-test.yml']
+    paths: ['.github/actions/publish-release/**', '.github/actions/acr-*/**', '.github/actions/atlas-repository/**', '.github/actions/foundry-deploy/**', 'tests/test_*.py', 'scripts/python-package.sh', '.github/workflows/python-package.yml', '.github/workflows/docker.yml', '.github/workflows/publish-release-test.yml']
 
 permissions:
   contents: read

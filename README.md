@@ -7,6 +7,7 @@ Reusable GitHub Actions workflow templates. Callers choose their events and inpu
 | `.github/workflows/linear-issue-check.yml` | Validate PR branch issue IDs through Linear read-only OAuth |
 | `.github/workflows/validate.yml` | Terraform formatting and validation, with optional Helm rendering |
 | `.github/workflows/docker.yml` | Build or publish to the platform ACR with image-scoped BuildKit caching |
+| `.github/workflows/python-package.yml` | Build one Python wheel and optionally publish it to a GitHub release |
 
 ## Usage
 
@@ -43,6 +44,47 @@ For Helm rendering, also supply `helm-chart`, `helm-chart-version`, and optional
 `helm-repository`, `helm-release`, `helm-namespace`, `helm-values-file`, and
 `helm-version`. Omitting `helm-chart` skips rendering. Remote charts require a
 pinned chart version. Input defaults are declared in the callable workflow.
+
+## Python packages
+
+Call `.github/workflows/python-package.yml` once per package. Supply
+`package-directory` and a full `revision`; optional `python-version` defaults3.12,
+`artifact-name` defaults `python-wheel`, and `publish` defaults false. The wheel's
+metadata supplies its version; `release-prefix` defaults `v`. Callers own events,
+matrices, trusted-source checks, package-specific tests, publication approval and
+concurrency. The workflow has no internal matrix or app-specific test command.
+
+```yaml
+package:
+  needs: tests
+  permissions:
+    contents: write
+  uses: ai-platform-portfolio/ops-shared/.github/workflows/python-package.yml@<merged-commit-sha>
+  with:
+    package-directory: agents/observability
+    revision: ${{ github.event.pull_request.head.sha || github.sha }}
+    release-prefix: agent-observability-v
+    publish: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish }}
+```
+
+Native `pip wheel --no-deps` builds the caller's pyproject.toml with its declared
+build backend. The checked-out commit timestamp becomes SOURCE_DATE_EPOCH.
+Python setup is skipped when the requested minor/full version is already present.
+Outputs are `wheel`, `version`, `sha256`, and published `url` (empty for build-only).
+The build artifact contains the wheel, SHA256SUMS and source/package identity JSON.
+
+The read-only build and write-enabled publication use separate runners. PR events
+cannot publish. The publisher verifies source/hash and existing tag identity,
+uploads to a draft release without clobbering, then publishes after assets are
+complete. Identical retries verify and reuse existing bytes; differing artifacts
+fail rather than overwrite a release. No PyPI registry, GHCR layer, stored PAT or
+Azure identity is needed. Repositories can enable GitHub immutable releases for
+additional server-side protection; this workflow does not change repository settings.
+Private release assets need consumer authentication; public wheels can be pinned
+by HTTPS URL/SHA256 in requirements.txt with hash/binary-only installs.
+
+When changing scripts/python-package.sh, update this workflow's script checkout
+pin to the commit containing it, matching the existing shared-workflow convention.
 
 ## Azure registry building blocks
 
