@@ -1,0 +1,80 @@
+name: Invoke a Foundry agent
+description: Native azd invocation of one pinned serving agent version with OIDC authentication.
+inputs:
+  service:
+    description: Native azure.yaml service key.
+    required: true
+  environment:
+    description: Stable repository and agent environment identity.
+    required: true
+  working-directory:
+    description: Agent project directory.
+    required: true
+  version:
+    description: Optional exact numeric version; otherwise use the pinned serving route.
+    default: ''
+  request-file:
+    description: Absolute path to the bounded JSON invocation.
+    required: true
+  client-id:
+    description: Existing Azure OIDC client identity.
+    required: true
+  tenant-id:
+    description: Existing Azure tenant.
+    required: true
+  subscription-id:
+    description: Existing Azure subscription.
+    required: true
+  location:
+    description: Existing Foundry region.
+    required: true
+outputs:
+  response:
+    description: JSON response file on this runner.
+    value: ${{ steps.invoke.outputs.response }}
+  version:
+    description: Exact numeric version selected from the fixed serving route.
+    value: ${{ steps.invoke.outputs.version }}
+runs:
+  using: composite
+  steps:
+    - name: Check for Azure Developer CLI
+      id: cli
+      shell: bash
+      run: command -v azd >/dev/null 2>&1 && echo 'installed=true' >> "$GITHUB_OUTPUT" || true
+
+    - name: Install Azure Developer CLI when missing
+      if: steps.cli.outputs.installed != 'true'
+      uses: Azure/setup-azd@0b7e3a35ab00f2eee7080c845eb39c3f0ebfa553
+      with:
+        version: 1.37.3
+
+    - name: Authenticate and select the existing project
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        AZURE_CLIENT_ID: ${{ inputs.client-id }}
+        AZURE_TENANT_ID: ${{ inputs.tenant-id }}
+        AZURE_SUBSCRIPTION_ID: ${{ inputs.subscription-id }}
+        AZURE_LOCATION: ${{ inputs.location }}
+        AZURE_ENV_NAME: ${{ inputs.environment }}
+      run: |
+        azd extension install azure.ai.agents --version 1.0.0 --no-prompt
+        azd auth login --client-id "$AZURE_CLIENT_ID" --tenant-id "$AZURE_TENANT_ID" --federated-credential-provider github --no-prompt
+        if [[ -f ".azure/$AZURE_ENV_NAME/.env" ]]; then
+          azd env select "$AZURE_ENV_NAME" --no-prompt
+        else
+          azd env new "$AZURE_ENV_NAME" --subscription "$AZURE_SUBSCRIPTION_ID" --location "$AZURE_LOCATION" --no-prompt
+        fi
+        azd env set "FOUNDRY_PROJECT_ENDPOINT=$FOUNDRY_PROJECT_ENDPOINT" -e "$AZURE_ENV_NAME" --no-prompt
+
+    - name: Invoke the fixed serving version
+      id: invoke
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        SERVICE: ${{ inputs.service }}
+        AZURE_ENV_NAME: ${{ inputs.environment }}
+        REQUEST_FILE: ${{ inputs.request-file }}
+        VERSION: ${{ inputs.version }}
+      run: python3 "${{ github.action_path }}/invoke.py"

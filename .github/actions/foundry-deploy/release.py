@@ -91,6 +91,7 @@ def record(service):
         raise ValueError('Deployed source revision does not match the release')
     record = {'agent': current['name'], 'version': version, 'image': image,
               'source_revision': os.environ['SOURCE_REVISION'],
+              'instance_principal_id': (current.get('instance_identity') or {}).get('principal_id'),
               'endpoints': current.get('agent_endpoints', {})}
     target = Path(os.environ['RUNNER_TEMP']) / 'foundry-release.json'
     target.write_text(json.dumps(record, indent=2))
