@@ -290,6 +290,38 @@ published `main` builds use the same format unless `tag` is supplied. Use a
 `.dockerignore` in each build context to keep irrelevant files out of the build.
 
 
+### Docker build guidance
+
+Application repositories own their Dockerfiles; the shared workflow builds and
+publishes them. Apply this guidance when creating or reviewing an image:
+
+- Use a maintained, trusted base image pinned by digest. Review and refresh the
+  pin for security updates; a fixed digest preserves old vulnerabilities too.
+- Use multiple stages to keep tests, fixtures and build tooling out of the final
+  runtime. Keep explicit copies readable and retain only required runtime files.
+- Run as a non-root user. Keep application code and installed dependencies owned
+  by root so the runtime user cannot modify them; provide only necessary writable paths.
+- Keep the build context small. Exclude local environments, caches, credentials,
+  `.env` files and private keys, including nested files, through `.dockerignore`.
+- Lock direct and transitive dependencies and verify artifact hashes. For Python,
+  use `--require-hashes` and prefer `--only-binary=:all:` when supported wheels are
+  available. Keep the human-maintained dependency input and generated lock in sync.
+  A generated `requirements.txt` can serve the same purpose as `requirements.lock`.
+- Run application tests before releasing the image, then assess the actual final
+  image's vulnerabilities. Review affected code paths and available fixes; passing
+  tests and pinned dependencies do not establish a clean vulnerability scan.
+
+These recommendations are not all enforced by `docker.yml`. With `scan: true`,
+the current workflow scans **after pushing** and blocks release of the image
+record on HIGH/CRITICAL findings. Build-only PRs do not run that scan. See
+[image scan and matrix handoff](#optional-image-scan-and-matrix-handoff).
+
+References: [Docker build guidance](https://docs.docker.com/build/building/best-practices/)
+and [pip secure installs](https://pip.pypa.io/en/stable/topics/secure-installs/).
+
+**TODO — Backstage:** Surface this guidance in Backstage's developer documentation
+and relevant software templates so developers can find it when creating services.
+
 ## Atlas validation action
 
 Applications compose their own jobs: call `docker.yml` per image, use the official
