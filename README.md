@@ -6,6 +6,7 @@ Reusable GitHub Actions workflow templates. Callers choose their events and inpu
 | --- | --- |
 | `.github/workflows/linear-issue-check.yml` | Validate PR branch issue IDs through Linear read-only OAuth |
 | `.github/workflows/validate.yml` | Terraform formatting and validation, with optional Helm rendering |
+| `.github/workflows/terraform.yml` | Azure OIDC Terraform plan and saved-plan apply |
 | `.github/workflows/docker.yml` | Build or publish to the platform ACR with image-scoped BuildKit caching |
 | `.github/workflows/python-package.yml` | Build one Python wheel and optionally publish it to a GitHub release |
 
@@ -33,6 +34,65 @@ The Linear workflow requires a `pull_request` event and both OAuth secrets.
 It fetches `scripts/linear_issue.py` from this repository at a pinned commit and
 runs it against the caller's PR metadata. When changing the script, update the
 workflow's checkout pin to a commit containing that change.
+
+## Azure Terraform delivery
+
+`terraform.yml` operates on one caller-owned root and Azure backend key. It uses
+Terraform consistently for both PR plans and main-branch saved-plan applies.
+AWS configuration and the reference workflow's OpenTofu preview engine are omitted.
+Inputs, jobs and steps follow the spacing used by the other shared workflows.
+
+```yaml
+jobs:
+  infrastructure:
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
+
+    uses: ai-platform-portfolio/ops-shared/.github/workflows/terraform.yml@<merged-commit-sha>
+    with:
+      root: terraform
+      state-key: example-hosting.tfstate
+      variables: '{"environment":"demo"}'
+      plan-environment: central-plan
+      apply-environment: central-apply
+    secrets:
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      TF_BACKEND_RESOURCE_GROUP: ${{ secrets.TF_BACKEND_RESOURCE_GROUP }}
+      TF_BACKEND_RESOURCE_NAME: ${{ secrets.TF_BACKEND_RESOURCE_NAME }}
+      TF_BACKEND_CONTAINER: ${{ secrets.TF_BACKEND_CONTAINER }}
+```
+
+The root declares an `azurerm` backend and commits its provider lock file, including
+runner-platform checksums. `vars-file` is optional and relative to that root.
+`variables` is a JSON object of non-secret overrides, written to a temporary
+variable file without shell evaluation. Azure authentication uses the three
+existing identity secrets and native OIDC; neither a client secret nor Azure CLI
+login is required. The identity needs federated trust for the selected GitHub
+environments, backend blob access and permissions appropriate to the root.
+
+Fork PRs cannot run authenticated plans. Same-repository PRs produce a redacted
+summary and update one PR comment; they cannot upload an apply plan or apply.
+Only non-PR runs on `main` upload the binary plan and apply that exact artifact.
+The caller owns triggers: invoke only on `workflow_dispatch` for manual delivery,
+or also on main pushes for continuous delivery. Configure required reviewers on
+the apply environment when an approval gate is needed; naming an environment
+alone does not protect it.
+
+The complete plan/apply pair is serialized by repository and state key, with no
+running-run cancellation. Saved plans expire after one day and may contain
+sensitive data; repository Actions access controls protect them. Raw plan JSON
+is not published. Human-readable summaries and apply logs redact UUIDs in addition
+to GitHub secret masking and Terraform's sensitive-value handling. Mark sensitive
+Terraform variables appropriately; redaction is not a general secret scanner.
+For multiple roots in one run, choose distinct state keys and `plan-artifact`
+names. State/bootstrap creation, Azure RBAC, provider registration and backend
+deletion are outside this workflow.
+
+Reference: [Azure-only adaptation of the supplied workflow](https://github.com/library-bin-placeholder/ops-shared/blob/main/.github/workflows/terraform.yml).
 
 `terraform-directories` is a nonempty JSON array of caller-relative paths or glob
 patterns, such as `["bootstrap"]` or `["modules/*/*"]`. Each matrix job expands

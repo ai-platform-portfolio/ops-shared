@@ -1,0 +1,230 @@
+name: Plan and apply Azure Terraform
+
+on:
+  workflow_call:
+    inputs:
+      root:
+        description: Caller-relative Terraform root.
+        type: string
+        default: terraform
+
+      state-key:
+        description: Unique blob key in the existing Azure backend.
+        required: true
+        type: string
+
+      vars-file:
+        description: Optional variable file relative to the Terraform root.
+        type: string
+        default: ''
+
+      variables:
+        description: JSON object of non-secret Terraform input overrides.
+        type: string
+        default: '{}'
+
+      terraform-version:
+        type: string
+        default: '1.17.1'
+
+      plan-environment:
+        type: string
+        default: central-plan
+
+      apply-environment:
+        type: string
+        default: central-apply
+
+      plan-artifact:
+        description: Saved-plan artifact name; choose a distinct name for each invocation in a run.
+        type: string
+        default: terraform-plan
+
+    secrets:
+      AZURE_TENANT_ID:
+        required: true
+
+      AZURE_SUBSCRIPTION_ID:
+        required: true
+
+      AZURE_CLIENT_ID:
+        required: true
+
+      TF_BACKEND_RESOURCE_GROUP:
+        required: true
+
+      TF_BACKEND_RESOURCE_NAME:
+        required: true
+
+      TF_BACKEND_CONTAINER:
+        required: true
+
+permissions:
+  contents: read
+
+# Serialize the complete plan/apply pair for each caller and state, so another
+# run cannot change the state while an approved saved plan is waiting to apply.
+concurrency:
+  group: terraform-${{ github.repository }}-${{ inputs.state-key }}
+  cancel-in-progress: false
+
+env:
+  TF_IN_AUTOMATION: 'true'
+  ARM_USE_OIDC: 'true'
+  ARM_USE_AZUREAD: 'true'
+  ARM_USE_CLI: 'false'
+  ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+  TF_STATE_RESOURCE_GROUP: ${{ secrets.TF_BACKEND_RESOURCE_GROUP }}
+  TF_STATE_STORAGE_ACCOUNT: ${{ secrets.TF_BACKEND_RESOURCE_NAME }}
+  TF_STATE_CONTAINER: ${{ secrets.TF_BACKEND_CONTAINER }}
+  TF_STATE_KEY: ${{ inputs.state-key }}
+  TF_ROOT: ${{ inputs.root }}
+
+jobs:
+  plan:
+    name: Plan
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: ${{ inputs.plan-environment }}
+
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd
+        with:
+          terraform_version: ${{ inputs.terraform-version }}
+          terraform_wrapper: false
+
+      - name: Init
+        run: |
+          terraform -chdir="$TF_ROOT" init -input=false -lockfile=readonly -no-color \
+            -backend-config="resource_group_name=$TF_STATE_RESOURCE_GROUP" \
+            -backend-config="storage_account_name=$TF_STATE_STORAGE_ACCOUNT" \
+            -backend-config="container_name=$TF_STATE_CONTAINER" \
+            -backend-config="key=$TF_STATE_KEY"
+
+      - name: Validate
+        run: |
+          terraform -chdir="$TF_ROOT" fmt -check -recursive
+          terraform -chdir="$TF_ROOT" validate -no-color
+
+      - name: Plan
+        id: plan
+        shell: bash
+        env:
+          VARIABLES: ${{ inputs.variables }}
+          VARS_FILE: ${{ inputs.vars-file }}
+        run: |
+          set -euo pipefail
+
+          jq -e 'type == "object"' <<< "$VARIABLES" > /dev/null
+          printf '%s\n' "$VARIABLES" > "$RUNNER_TEMP/inputs.tfvars.json"
+
+          args=()
+          if [[ -n "$VARS_FILE" ]]; then
+            args+=("-var-file=$VARS_FILE")
+          fi
+
+          terraform -chdir="$TF_ROOT" plan -input=false -lock-timeout=5m -no-color \
+            "${args[@]}" -var-file="$RUNNER_TEMP/inputs.tfvars.json" \
+            -out="$RUNNER_TEMP/infrastructure.tfplan" > "$RUNNER_TEMP/plan.txt" 2>&1
+
+      - name: Publish redacted plan summary
+        if: always() && steps.plan.outcome != 'skipped'
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+        env:
+          PLAN_RESULT: ${{ steps.plan.outcome }}
+        with:
+          script: |
+            const fs = require('fs');
+            const path = `${process.env.RUNNER_TEMP}/plan.txt`;
+            let plan = fs.existsSync(path) ? fs.readFileSync(path, 'utf8') : 'Plan could not run; see the workflow logs.';
+
+            for (const [key, value] of Object.entries(process.env)) {
+              if (value && /^(ARM_|TF_STATE_)/.test(key) && !['true', 'false'].includes(value)) {
+                plan = plan.split(value).join('[redacted]');
+              }
+            }
+
+            plan = plan.replace(/\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b/gi, '[redacted-id]')
+              .replace(/```/g, "'''").slice(0, 50000);
+
+            const marker = '<!-- terraform-plan -->';
+            const body = `${marker}\n### Terraform plan (${process.env.PLAN_RESULT})\n\n<details><summary>Show plan</summary>\n\n\`\`\`hcl\n${plan}\n\`\`\`\n</details>`;
+            await core.summary.addRaw(body).write();
+
+            if (context.eventName === 'pull_request') {
+              const params = {...context.repo, issue_number: context.issue.number};
+              const comments = await github.paginate(github.rest.issues.listComments, params);
+              const existing = comments.find(c => c.user.login === 'github-actions[bot]' && c.body?.includes(marker));
+
+              if (existing) {
+                await github.rest.issues.updateComment({...context.repo, comment_id: existing.id, body});
+              } else {
+                await github.rest.issues.createComment({...params, body});
+              }
+            }
+
+      - name: Save plan for apply
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ${{ inputs.plan-artifact }}
+          path: ${{ runner.temp }}/infrastructure.tfplan
+          retention-days: 1
+          if-no-files-found: error
+
+  apply:
+    name: Apply
+    needs: plan
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: ${{ inputs.apply-environment }}
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd
+        with:
+          terraform_version: ${{ inputs.terraform-version }}
+          terraform_wrapper: false
+
+      - name: Init
+        run: |
+          terraform -chdir="$TF_ROOT" init -input=false -lockfile=readonly -no-color \
+            -backend-config="resource_group_name=$TF_STATE_RESOURCE_GROUP" \
+            -backend-config="storage_account_name=$TF_STATE_STORAGE_ACCOUNT" \
+            -backend-config="container_name=$TF_STATE_CONTAINER" \
+            -backend-config="key=$TF_STATE_KEY"
+
+      - name: Download saved plan
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ${{ inputs.plan-artifact }}
+          path: ${{ runner.temp }}
+
+      - name: Apply saved plan
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          terraform -chdir="$TF_ROOT" apply -input=false -lock-timeout=5m -no-color \
+            "$RUNNER_TEMP/infrastructure.tfplan" 2>&1 \
+            | sed -E 's/[[:xdigit:]]{8}(-[[:xdigit:]]{4}){3}-[[:xdigit:]]{12}/[redacted-id]/g'
