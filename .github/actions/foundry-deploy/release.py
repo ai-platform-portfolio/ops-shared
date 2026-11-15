@@ -7,6 +7,9 @@ import re
 import subprocess
 import sys
 
+from azure.ai.projects import AIProjectClient
+from azure.core.exceptions import AzureError
+from azure.identity import AzureDeveloperCliCredential
 import yaml
 
 
@@ -65,8 +68,16 @@ def prepare(service):
 
     # Native first deployment creates @latest; freeze only its bootstrap version.
     if version == '@latest' and rules[0].get('type') == 'FixedRatio':
-        bootstrap = json.loads(azd('ai', 'agent', 'show', service, '--output', 'json'))
-        if (bootstrap.get('name') != name or bootstrap.get('version') != '1'
+        try:
+            with AzureDeveloperCliCredential(process_timeout=30) as credential, AIProjectClient(
+                    endpoint=os.environ['FOUNDRY_PROJECT_ENDPOINT'], credential=credential,
+                    connection_timeout=5, read_timeout=15, retry_total=0) as project:
+                agent = project.agents.get(name).as_dict()
+        except AzureError as error:
+            status = getattr(error, 'status_code', None)
+            raise RuntimeError(f'Bootstrap metadata read failed ({type(error).__name__}, status={status})') from None
+        bootstrap = agent['versions']['latest']
+        if (agent.get('name') != name or bootstrap.get('version') != '1'
                 or bootstrap.get('status', '').lower() not in ('active', 'idle')):
             raise ValueError('Latest alias is not a ready bootstrap version; review the serving route')
         version = bootstrap['version']

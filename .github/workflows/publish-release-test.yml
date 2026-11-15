@@ -24,6 +24,6 @@ jobs:
         with:
           version: v3.22.1
 
-      - run: python3 -m pip install PyYAML==6.0.3
+      - run: python3 -m pip install PyYAML==6.0.3 azure-ai-projects==2.11.0 azure-identity==1.27.0
 
       - run: python3 -B -m unittest discover -s tests -p 'test_*.py' -v

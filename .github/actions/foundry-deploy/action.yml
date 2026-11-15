@@ -148,10 +148,11 @@ runs:
           "AGENT_TRACES_ENDPOINT=$TRACES_ENDPOINT" "FOUNDRY_PROJECT_ENDPOINT=$FOUNDRY_PROJECT_ENDPOINT" \
           --environment "$AZURE_ENV_NAME" --no-prompt
 
-    - name: Ensure YAML support for native configuration edits
+    - name: Ensure native configuration and project read dependencies
       shell: bash
       run: |
-        python3 -c 'import yaml' 2>/dev/null || python3 -m pip install --disable-pip-version-check 'PyYAML==6.0.3'
+        python3 -c 'from importlib.metadata import version; assert (version("PyYAML"), version("azure-ai-projects"), version("azure-identity")) == ("6.0.3", "2.11.0", "1.27.0")' 2>/dev/null ||
+          python3 -m pip install --disable-pip-version-check 'PyYAML==6.0.3' 'azure-ai-projects==2.11.0' 'azure-identity==1.27.0'
 
     - name: Prepare native agent identity and preserve serving route
       id: prepare
