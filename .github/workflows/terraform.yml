@@ -85,7 +85,7 @@ env:
 jobs:
   plan:
     name: Plan
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event.pull_request == null || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: ${{ inputs.plan-environment }}
@@ -176,7 +176,7 @@ jobs:
             }
 
       - name: Save plan for apply
-        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        if: github.ref == 'refs/heads/main' && github.event.pull_request == null
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: ${{ inputs.plan-artifact }}
@@ -187,7 +187,7 @@ jobs:
   apply:
     name: Apply
     needs: plan
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    if: github.ref == 'refs/heads/main' && github.event.pull_request == null
     runs-on: ubuntu-latest
     timeout-minutes: 60
     environment: ${{ inputs.apply-environment }}
