@@ -51,6 +51,53 @@ class FoundryReleaseTests(unittest.TestCase):
         self.assertEqual(declaration['agentEndpoint']['versionSelector']['versionSelectionRules'][0]['agentVersion'], '7')
         self.assertEqual(cli.call_args_list[1].args[:4], ('ai', 'agent', 'endpoint', 'update'))
 
+    def test_native_bootstrap_alias_is_pinned_and_verified_before_deployment(self):
+        initial = copy.deepcopy(self.endpoint)
+        initial['version_selector']['version_selection_rules'][0]['agent_version'] = '@latest'
+        pinned = copy.deepcopy(self.endpoint)
+        pinned['version_selector']['version_selection_rules'][0]['agent_version'] = '1'
+        bootstrap = {'name': 'second-catalog-helper', 'version': '1', 'status': 'Active'}
+        with patch.object(release, 'azd', side_effect=[json.dumps({'agent_endpoint': initial}),
+                json.dumps(bootstrap), '', json.dumps({'agent_endpoint': pinned})]) as cli:
+            release.prepare('helper')
+        self.assertEqual(cli.call_args_list[1].args, ('ai', 'agent', 'show', 'helper', '--output', 'json'))
+        self.assertEqual(cli.call_args_list[2].args, ('ai', 'agent', 'endpoint', 'update', 'helper'))
+        declaration = yaml.safe_load(Path('azure.yaml').read_text())['services']['helper']['agentEndpoint']
+        self.assertEqual(declaration['versionSelector']['versionSelectionRules'][0]['agentVersion'], '1')
+        self.assertEqual(declaration['authorizationSchemes'], [{'type': 'Entra'}])
+        self.assertEqual(Path(os.environ['GITHUB_OUTPUT']).read_text(), 'serving-version=1\n')
+
+    def test_latest_alias_cannot_freeze_later_unready_or_different_agents(self):
+        endpoint = copy.deepcopy(self.endpoint)
+        endpoint['version_selector']['version_selection_rules'][0]['agent_version'] = '@latest'
+        bootstrap = {'name': 'second-catalog-helper', 'version': '1', 'status': 'Active'}
+        for changed in ({'version': '2'}, {'version': None}, {'name': 'another-agent'}, {'status': 'Failed'}):
+            with self.subTest(changed=changed), patch.object(release, 'azd', side_effect=[
+                    json.dumps({'agent_endpoint': endpoint}), json.dumps({**bootstrap, **changed})]) as cli:
+                with self.assertRaisesRegex(ValueError, 'review the serving route'):
+                    release.prepare('helper')
+                self.assertEqual(cli.call_count, 2)
+                self.assertNotIn('versionSelector', yaml.safe_load(Path('azure.yaml').read_text())['services']['helper']['agentEndpoint'])
+
+    def test_other_aliases_and_selector_types_are_not_overwritten(self):
+        for alias, kind in (('latest', 'FixedRatio'), ('@preview', 'FixedRatio'), ('@latest', 'Unknown')):
+            endpoint = copy.deepcopy(self.endpoint)
+            endpoint['version_selector']['version_selection_rules'][0].update(agent_version=alias, type=kind)
+            with self.subTest(alias=alias, kind=kind), patch.object(release, 'azd', return_value=json.dumps({'agent_endpoint': endpoint})) as cli:
+                with self.assertRaisesRegex(ValueError, 'explicit numeric version'):
+                    release.prepare('helper')
+                self.assertEqual(cli.call_count, 1)
+
+    def test_bootstrap_alias_readback_failure_blocks_release_output(self):
+        initial = copy.deepcopy(self.endpoint)
+        initial['version_selector']['version_selection_rules'][0]['agent_version'] = '@latest'
+        bootstrap = {'name': 'second-catalog-helper', 'version': '1', 'status': 'Active'}
+        with patch.object(release, 'azd', side_effect=[json.dumps({'agent_endpoint': initial}),
+                json.dumps(bootstrap), '', json.dumps({'agent_endpoint': initial})]):
+            with self.assertRaisesRegex(ValueError, 'verified'):
+                release.prepare('helper')
+        self.assertFalse(Path(os.environ['GITHUB_OUTPUT']).exists())
+
     def test_only_explicit_not_found_allows_bootstrap(self):
         with patch.object(release, 'azd', side_effect=subprocess.CalledProcessError(1, 'azd', stderr='HTTP 404')):
             release.prepare('helper')

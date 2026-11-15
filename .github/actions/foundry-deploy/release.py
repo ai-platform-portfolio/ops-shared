@@ -62,6 +62,15 @@ def prepare(service):
         version = rules[0]['agent_version']
     else:
         raise ValueError('Existing endpoint needs an explicit single serving version; refusing an unpinned or split route')
+
+    # Native first deployment creates @latest; freeze only its bootstrap version.
+    if version == '@latest' and rules[0].get('type') == 'FixedRatio':
+        bootstrap = json.loads(azd('ai', 'agent', 'show', service, '--output', 'json'))
+        if (bootstrap.get('name') != name or bootstrap.get('version') != '1'
+                or bootstrap.get('status', '').lower() not in ('active', 'idle')):
+            raise ValueError('Latest alias is not a ready bootstrap version; review the serving route')
+        version = bootstrap['version']
+
     if not re.fullmatch(r'[1-9][0-9]*', version):
         raise ValueError('Serving version must be an explicit numeric version')
     desired['versionSelector'] = {'versionSelectionRules': [
