@@ -26,6 +26,10 @@ inputs:
     description: Target Azure subscription.
     required: true
 
+  project-id:
+    description: Existing Foundry project ARM resource ID.
+    required: true
+
   location:
     description: Azure location for the native azd environment.
     required: true
@@ -102,7 +106,9 @@ runs:
         AZURE_ENV_NAME: ${{ inputs.environment }}
         AZURE_SUBSCRIPTION_ID: ${{ inputs.subscription-id }}
         AZURE_LOCATION: ${{ inputs.location }}
+        AZURE_AI_PROJECT_ID: ${{ inputs.project-id }}
       run: |
+        : "${AZURE_AI_PROJECT_ID:?Existing Foundry project resource ID is required}"
         if [[ -f ".azure/$AZURE_ENV_NAME/.env" ]]; then
           azd env select "$AZURE_ENV_NAME" --no-prompt
         else
@@ -110,6 +116,7 @@ runs:
             --location "$AZURE_LOCATION" --no-prompt
         fi
         azd env set "AZURE_SUBSCRIPTION_ID=$AZURE_SUBSCRIPTION_ID" "AZURE_LOCATION=$AZURE_LOCATION" \
+          "AZURE_AI_PROJECT_ID=$AZURE_AI_PROJECT_ID" \
           --environment "$AZURE_ENV_NAME" --no-prompt
 
     - name: Select prebuilt image when supplied
