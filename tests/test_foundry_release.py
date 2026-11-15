@@ -53,6 +53,46 @@ class FoundryReleaseTests(unittest.TestCase):
                          'version_selector': {'version_selection_rules': [
                              {'type': 'FixedRatio', 'agent_version': '7', 'traffic_percentage': 100}]}}
 
+    def test_runtime_grant_is_project_scoped_stable_and_records_checked_assignment(self):
+        project = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/example/providers/Microsoft.CognitiveServices/accounts/example/projects/demo'
+        principal, role = '22222222-2222-2222-2222-222222222222', '33333333-3333-3333-3333-333333333333'
+        record = Path('release.json')
+        record.write_text(json.dumps({'instance_principal_id': principal}))
+        commands = []
+
+        def run(command, **kwargs):
+            commands.append(command)
+            return subprocess.CompletedProcess(command, 0, json.dumps({
+                'principalId': principal, 'scope': project, 'roleDefinitionId': '/roles/' + role,
+                'id': project + '/providers/Microsoft.Authorization/roleAssignments/' + command[5]}))
+
+        with patch.dict(os.environ, PROJECT_ID=project, RUNTIME_PROJECT_ROLE_ID=role, RELEASE_RECORD=str(record)), \
+             patch.object(release.subprocess, 'run', side_effect=run):
+            release.grant('helper')
+            release.grant('helper')
+            self.assertEqual(commands[0], commands[1])
+            self.assertEqual(commands[0][commands[0].index('--scope') + 1], project)
+            self.assertIn('--assignee-object-id', commands[0])
+            self.assertIn('runtime_role_assignment_id', json.loads(record.read_text()))
+            os.environ['PROJECT_ID'] = '/subscriptions/11111111-1111-1111-1111-111111111111'
+            with self.assertRaises(ValueError):
+                release.grant('helper')
+            self.assertEqual(len(commands), 2)
+
+    def test_runtime_grant_rejects_mismatched_readback_and_hides_cli_diagnostics(self):
+        record = Path('release.json')
+        record.write_text(json.dumps({'instance_principal_id': '22222222-2222-2222-2222-222222222222'}))
+        project = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/example/providers/Microsoft.CognitiveServices/accounts/example/projects/demo'
+        with patch.dict(os.environ, PROJECT_ID=project, RUNTIME_PROJECT_ROLE_ID='33333333-3333-3333-3333-333333333333', RELEASE_RECORD=str(record)):
+            with patch.object(release.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, json.dumps({
+                    'principalId': 'another-principal', 'scope': project, 'roleDefinitionId': '/roles/other'}))):
+                with self.assertRaises(ValueError):
+                    release.grant('helper')
+            with patch.object(release.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1, '', 'private detail')):
+                with self.assertRaises(RuntimeError) as error:
+                    release.grant('helper')
+                self.assertNotIn('private detail', str(error.exception))
+
     def test_existing_route_remains_pinned_and_contract_preserved(self):
         with patch.object(release, 'azd', side_effect=[json.dumps({'agent_endpoint': self.endpoint}), '',
                                                      json.dumps({'agent_endpoint': self.endpoint})]) as cli:
