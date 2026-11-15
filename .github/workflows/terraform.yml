@@ -1,10 +1,10 @@
-name: Plan and apply Azure Terraform
+name: Plan and apply Azure OpenTofu
 
 on:
   workflow_call:
     inputs:
       root:
-        description: Caller-relative Terraform root.
+        description: Caller-relative OpenTofu configuration root.
         type: string
         default: terraform
 
@@ -19,13 +19,13 @@ on:
         default: ''
 
       variables:
-        description: JSON object of non-secret Terraform input overrides.
+        description: JSON object of non-secret OpenTofu input overrides.
         type: string
         default: '{}'
 
-      terraform-version:
+      tofu-version:
         type: string
-        default: '1.17.1'
+        default: '1.13.9'
 
       plan-environment:
         type: string
@@ -38,7 +38,7 @@ on:
       plan-artifact:
         description: Saved-plan artifact name; choose a distinct name for each invocation in a run.
         type: string
-        default: terraform-plan
+        default: opentofu-plan
 
     secrets:
       AZURE_TENANT_ID:
@@ -100,14 +100,14 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd
+      - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4
         with:
-          terraform_version: ${{ inputs.terraform-version }}
-          terraform_wrapper: false
+          tofu_version: ${{ inputs.tofu-version }}
+          tofu_wrapper: false
 
       - name: Init
         run: |
-          terraform -chdir="$TF_ROOT" init -input=false -lockfile=readonly -no-color \
+          tofu -chdir="$TF_ROOT" init -input=false -lockfile=readonly -no-color \
             -backend-config="resource_group_name=$TF_STATE_RESOURCE_GROUP" \
             -backend-config="storage_account_name=$TF_STATE_STORAGE_ACCOUNT" \
             -backend-config="container_name=$TF_STATE_CONTAINER" \
@@ -115,8 +115,8 @@ jobs:
 
       - name: Validate
         run: |
-          terraform -chdir="$TF_ROOT" fmt -check -recursive
-          terraform -chdir="$TF_ROOT" validate -no-color
+          tofu -chdir="$TF_ROOT" fmt -check -recursive
+          tofu -chdir="$TF_ROOT" validate -no-color
 
       - name: Plan
         id: plan
@@ -135,7 +135,7 @@ jobs:
             args+=("-var-file=$VARS_FILE")
           fi
 
-          terraform -chdir="$TF_ROOT" plan -input=false -lock-timeout=5m -no-color \
+          tofu -chdir="$TF_ROOT" plan -input=false -lock-timeout=5m -no-color \
             "${args[@]}" -var-file="$RUNNER_TEMP/inputs.tfvars.json" \
             -out="$RUNNER_TEMP/infrastructure.tfplan" > "$RUNNER_TEMP/plan.txt" 2>&1
 
@@ -160,7 +160,7 @@ jobs:
               .replace(/```/g, "'''").slice(0, 50000);
 
             const marker = '<!-- terraform-plan -->';
-            const body = `${marker}\n### Terraform plan (${process.env.PLAN_RESULT})\n\n<details><summary>Show plan</summary>\n\n\`\`\`hcl\n${plan}\n\`\`\`\n</details>`;
+            const body = `${marker}\n### OpenTofu plan (${process.env.PLAN_RESULT})\n\n<details><summary>Show plan</summary>\n\n\`\`\`hcl\n${plan}\n\`\`\`\n</details>`;
             await core.summary.addRaw(body).write();
 
             if (context.eventName === 'pull_request') {
@@ -201,14 +201,14 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd
+      - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4
         with:
-          terraform_version: ${{ inputs.terraform-version }}
-          terraform_wrapper: false
+          tofu_version: ${{ inputs.tofu-version }}
+          tofu_wrapper: false
 
       - name: Init
         run: |
-          terraform -chdir="$TF_ROOT" init -input=false -lockfile=readonly -no-color \
+          tofu -chdir="$TF_ROOT" init -input=false -lockfile=readonly -no-color \
             -backend-config="resource_group_name=$TF_STATE_RESOURCE_GROUP" \
             -backend-config="storage_account_name=$TF_STATE_STORAGE_ACCOUNT" \
             -backend-config="container_name=$TF_STATE_CONTAINER" \
@@ -225,6 +225,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          terraform -chdir="$TF_ROOT" apply -input=false -lock-timeout=5m -no-color \
+          tofu -chdir="$TF_ROOT" apply -input=false -lock-timeout=5m -no-color \
             "$RUNNER_TEMP/infrastructure.tfplan" 2>&1 \
             | sed -E 's/[[:xdigit:]]{8}(-[[:xdigit:]]{4}){3}-[[:xdigit:]]{12}/[redacted-id]/g'

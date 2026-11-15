@@ -13,6 +13,11 @@ on:
         type: string
         default: '1.5.7'
 
+      tofu-version:
+        description: OpenTofu CLI version; when set, use OpenTofu for all configuration checks.
+        type: string
+        default: ''
+
       helm-chart:
         description: Optional local chart path, chart name or OCI reference; empty skips Helm.
         type: string
@@ -51,6 +56,9 @@ on:
 permissions:
   contents: read
 
+env:
+  TF_ENGINE: ${{ inputs.tofu-version != '' && 'tofu' || 'terraform' }}
+
 jobs:
   format:
     runs-on: ubuntu-latest
@@ -62,10 +70,17 @@ jobs:
           persist-credentials: false
 
       - uses: hashicorp/setup-terraform@v3
+        if: inputs.tofu-version == ''
         with:
           terraform_version: ${{ inputs.terraform-version }}
 
-      - run: terraform fmt -check -recursive .
+      - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4
+        if: inputs.tofu-version != ''
+        with:
+          tofu_version: ${{ inputs.tofu-version }}
+          tofu_wrapper: false
+
+      - run: '"$TF_ENGINE" fmt -check -recursive .'
 
   terraform:
     runs-on: ubuntu-latest
@@ -82,8 +97,15 @@ jobs:
           persist-credentials: false
 
       - uses: hashicorp/setup-terraform@v3
+        if: inputs.tofu-version == ''
         with:
           terraform_version: ${{ inputs.terraform-version }}
+
+      - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4
+        if: inputs.tofu-version != ''
+        with:
+          tofu_version: ${{ inputs.tofu-version }}
+          tofu_wrapper: false
 
       - name: Validate Terraform directories
         shell: bash
@@ -95,8 +117,8 @@ jobs:
             [[ -d "$directory" ]] || continue
             matched=true
             echo "Validating $directory"
-            terraform -chdir="$directory" init -backend=false -input=false
-            terraform -chdir="$directory" validate
+            "$TF_ENGINE" -chdir="$directory" init -backend=false -input=false
+            "$TF_ENGINE" -chdir="$directory" validate
           done < <(compgen -G "$DIRECTORY_PATTERN")
 
           if [[ "$matched" != true ]]; then
