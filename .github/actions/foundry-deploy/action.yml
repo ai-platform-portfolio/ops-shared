@@ -146,6 +146,14 @@ runs:
       run: |
         python3 -c 'import yaml' 2>/dev/null || python3 -m pip install --disable-pip-version-check 'PyYAML==6.0.3'
 
+    - name: Resolve the existing project for native deployment
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        AZURE_ENV_NAME: ${{ inputs.environment }}
+        AZURE_SUBSCRIPTION_ID: ${{ inputs.subscription-id }}
+      run: python3 "${{ github.action_path }}/release.py" connect
+
     - name: Prepare native agent identity and preserve serving route
       id: prepare
       shell: bash

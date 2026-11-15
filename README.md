@@ -466,7 +466,18 @@ environment names for distinct deployment targets.
 The caller supplies native `azure.yaml` and any referenced environment values.
 For an existing Foundry project, declare an `azure.ai.project` service with its
 `endpoint` set and reference it from the agent service using `uses`. Configure the
-agent's source package or prebuilt `image` there. A digest-pinned prebuilt image
+agent's source package or prebuilt `image` there. Before deployment, the action
+uses the existing azd login to read ARM project metadata in the supplied
+subscription, match the standard `https://<account>.services.ai.azure.com/api/projects/<project>`
+endpoint and set native `AZURE_AI_PROJECT_ID` in that runner-local environment.
+Missing, ambiguous or mismatched projects fail before deployment. The lookup
+creates no resources, credentials or Terraform outputs. ARM tokens are held only
+in memory; redirects are disabled and pagination stays on the same ARM
+subscription path. Tokens and resource IDs are not emitted as action outputs.
+The publishing identity needs read access to the existing project; actual OIDC
+lookup must be verified in the caller's CI.
+
+A digest-pinned prebuilt image
 can come from the existing Docker workflow; where a Dockerfile is also present,
 set `AZD_AGENT_SKIP_ACR=true` in the active azd environment to select that image.
 The optional `image` input accepts a registry-qualified `@sha256:` reference and
@@ -517,7 +528,9 @@ single-workflow build-matrix to deploy-matrix handoff for prebuilt images.
 
 References: [Microsoft CI/CD guidance](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/set-up-ci-cd-cli),
 [native configuration](https://learn.microsoft.com/en-us/azure/foundry/agents/concepts/azure-yaml-reference),
-[prebuilt images](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/deploy-hosted-agent-private-azure-container-registry).
+[prebuilt images](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/deploy-hosted-agent-private-azure-container-registry),
+[native project-ID configuration](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/set-up-cicd-hosted-agent),
+[ARM resource discovery](https://learn.microsoft.com/en-us/rest/api/resources/resources/list?view=rest-resources-2021-04-01).
 
 ### Foundry incident capabilities
 
