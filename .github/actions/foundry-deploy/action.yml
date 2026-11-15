@@ -30,6 +30,10 @@ inputs:
     description: Existing Foundry project ARM resource ID.
     required: true
 
+  runtime-project-role-id:
+    description: Optional built-in role GUID for the deployed instance identity, scoped only to project-id. Requires role-assignment permission.
+    default: ''
+
   location:
     description: Azure location for the native azd environment.
     required: true
@@ -184,3 +188,22 @@ runs:
         IMAGE: ${{ inputs.image }}
         SOURCE_REVISION: ${{ inputs.source-revision }}
       run: python3 "${{ github.action_path }}/release.py" record "$SERVICE"
+
+    - name: Authenticate for requested runtime project access
+      if: inputs.runtime-project-role-id != ''
+      uses: azure/login@v3
+      with:
+        client-id: ${{ inputs.client-id }}
+        tenant-id: ${{ inputs.tenant-id }}
+        subscription-id: ${{ inputs.subscription-id }}
+
+    - name: Ensure requested runtime project access
+      if: inputs.runtime-project-role-id != ''
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        PROJECT_ID: ${{ inputs.project-id }}
+        RUNTIME_PROJECT_ROLE_ID: ${{ inputs.runtime-project-role-id }}
+        RELEASE_RECORD: ${{ steps.release.outputs.record }}
+        SERVICE: ${{ inputs.service }}
+      run: python3 "${{ github.action_path }}/release.py" grant "$SERVICE"

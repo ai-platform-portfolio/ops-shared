@@ -457,6 +457,15 @@ already-installed extension. The small native JSON/YAML adapter uses Python3 and
 PyYAML (reuses the runner installation; installs pinned6.0.3 only when absent).
 It does not call a custom Azure SDK publisher or Azure REST deployment API.
 
+`runtime-project-role-id` optionally grants a caller-selected role GUID to the
+actual recorded instance identity at `project-id` scope. It defaults to no grant.
+This opt-in uses native `azure/login` and Azure CLI (`az`, required on the runner),
+with a deterministic assignment name and checked principal/scope/role readback.
+The deployer needs role-assignment permission for that role at the project scope.
+The assignment ID is retained in the release record. Versions reuse the instance
+identity; project teardown removes its project-scoped assignments. If deleting
+only the agent, remove its recorded assignment as part of that deletion lifecycle.
+
 Authentication uses native GitHub OIDC, with the existing organization ID secrets;
 there is no client secret. The action selects or creates the runner-local azd
 environment under `.azure/`, refreshes its subscription/location from the inputs,

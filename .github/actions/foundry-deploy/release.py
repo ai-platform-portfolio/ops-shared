@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import uuid
 
 from azure.ai.projects import AIProjectClient
 from azure.core.exceptions import AzureError
@@ -119,9 +120,34 @@ def record(service):
         output.write(f'version={version}\nrecord={target}\n')
 
 
+def grant(service):
+    """Idempotent native RBAC for the recorded instance, never a new identity."""
+    record_path = Path(os.environ['RELEASE_RECORD'])
+    record = json.loads(record_path.read_text())
+    principal = str(uuid.UUID(record['instance_principal_id']))
+    role = str(uuid.UUID(os.environ['RUNTIME_PROJECT_ROLE_ID']))
+    project = os.environ['PROJECT_ID'].rstrip('/')
+    if not re.fullmatch(r'/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/[^/]+/providers/Microsoft.CognitiveServices/accounts/[^/]+/projects/[^/]+', project):
+        raise ValueError('Runtime access must be scoped to a Foundry project')
+    assignment = str(uuid.uuid5(uuid.NAMESPACE_URL, f'{project.lower()}/{principal}/{role}'))
+    result = subprocess.run([
+        'az', 'role', 'assignment', 'create', '--name', assignment,
+        '--assignee-object-id', principal, '--assignee-principal-type', 'ServicePrincipal',
+        '--role', role, '--scope', project, '--output', 'json', '--only-show-errors',
+    ], capture_output=True, text=True, timeout=90)
+    if result.returncode:
+        raise RuntimeError('Runtime project role assignment failed; verify deployer role-assignment permission')
+    actual = json.loads(result.stdout)
+    if (actual['principalId'].lower() != principal or actual['scope'].lower() != project.lower()
+            or actual['roleDefinitionId'].rsplit('/', 1)[-1].lower() != role):
+        raise ValueError('Runtime project role assignment readback differs')
+    record['runtime_role_assignment_id'] = actual['id']
+    record_path.write_text(json.dumps(record, indent=2))
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('operation', choices=['prepare', 'record'])
+    parser.add_argument('operation', choices=['prepare', 'record', 'grant'])
     parser.add_argument('service')
     args = parser.parse_args()
-    (prepare if args.operation == 'prepare' else record)(args.service)
+    {'prepare': prepare, 'record': record, 'grant': grant}[args.operation](args.service)
