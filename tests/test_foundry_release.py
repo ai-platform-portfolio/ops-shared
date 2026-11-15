@@ -10,6 +10,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from azure.core.exceptions import ClientAuthenticationError, HttpResponseError
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -27,11 +28,22 @@ class FoundryReleaseTests(unittest.TestCase):
         self.addCleanup(os.chdir, self.previous)
         self.env = patch.dict(os.environ, {
             'AZURE_ENV_NAME': 'second-catalog-helper', 'PRESERVE_SERVING_VERSION': 'true',
+            'FOUNDRY_PROJECT_ENDPOINT': 'https://example.services.ai.azure.com/api/projects/demo',
             'SOURCE_REVISION': 'b' * 40, 'IMAGE': 'example.azurecr.io/helper@sha256:' + 'a' * 64,
             'GITHUB_OUTPUT': str(Path.cwd() / 'outputs'), 'RUNNER_TEMP': str(Path.cwd()),
         })
         self.env.start()
         self.addCleanup(self.env.stop)
+        self.credential_factory = patch.object(release, 'AzureDeveloperCliCredential')
+        self.credential = self.credential_factory.start()
+        self.addCleanup(self.credential_factory.stop)
+        self.project_factory = patch.object(release, 'AIProjectClient')
+        self.sdk = self.project_factory.start()
+        self.addCleanup(self.project_factory.stop)
+        self.project = self.sdk.return_value.__enter__.return_value
+        self.bootstrap = {'name': 'second-catalog-helper',
+                          'versions': {'latest': {'version': '1', 'status': 'Active'}}}
+        self.project.agents.get.return_value.as_dict.return_value = self.bootstrap
         Path('azure.yaml').write_text(yaml.safe_dump({'services': {'helper': {
             'name': '${AZURE_ENV_NAME}', 'agentEndpoint': {
                 'protocols': ['invocations'], 'authorizationSchemes': [{'type': 'Entra'}]},
@@ -56,12 +68,16 @@ class FoundryReleaseTests(unittest.TestCase):
         initial['version_selector']['version_selection_rules'][0]['agent_version'] = '@latest'
         pinned = copy.deepcopy(self.endpoint)
         pinned['version_selector']['version_selection_rules'][0]['agent_version'] = '1'
-        bootstrap = {'name': 'second-catalog-helper', 'version': '1', 'status': 'Active'}
         with patch.object(release, 'azd', side_effect=[json.dumps({'agent_endpoint': initial}),
-                json.dumps(bootstrap), '', json.dumps({'agent_endpoint': pinned})]) as cli:
+                '', json.dumps({'agent_endpoint': pinned})]) as cli:
             release.prepare('helper')
-        self.assertEqual(cli.call_args_list[1].args, ('ai', 'agent', 'show', 'helper', '--output', 'json'))
-        self.assertEqual(cli.call_args_list[2].args, ('ai', 'agent', 'endpoint', 'update', 'helper'))
+        self.project.agents.get.assert_called_once_with('second-catalog-helper')
+        self.credential.assert_called_once_with(process_timeout=30)
+        self.sdk.assert_called_once_with(endpoint=os.environ['FOUNDRY_PROJECT_ENDPOINT'],
+            credential=self.credential.return_value.__enter__.return_value,
+            connection_timeout=5, read_timeout=15, retry_total=0)
+        self.assertEqual(cli.call_args_list[1].args, ('ai', 'agent', 'endpoint', 'update', 'helper'))
+        self.assertFalse(Path('.azure').exists())
         declaration = yaml.safe_load(Path('azure.yaml').read_text())['services']['helper']['agentEndpoint']
         self.assertEqual(declaration['versionSelector']['versionSelectionRules'][0]['agentVersion'], '1')
         self.assertEqual(declaration['authorizationSchemes'], [{'type': 'Entra'}])
@@ -70,13 +86,17 @@ class FoundryReleaseTests(unittest.TestCase):
     def test_latest_alias_cannot_freeze_later_unready_or_different_agents(self):
         endpoint = copy.deepcopy(self.endpoint)
         endpoint['version_selector']['version_selection_rules'][0]['agent_version'] = '@latest'
-        bootstrap = {'name': 'second-catalog-helper', 'version': '1', 'status': 'Active'}
         for changed in ({'version': '2'}, {'version': None}, {'name': 'another-agent'}, {'status': 'Failed'}):
-            with self.subTest(changed=changed), patch.object(release, 'azd', side_effect=[
-                    json.dumps({'agent_endpoint': endpoint}), json.dumps({**bootstrap, **changed})]) as cli:
+            agent = copy.deepcopy(self.bootstrap)
+            if 'name' in changed:
+                agent.update(changed)
+            else:
+                agent['versions']['latest'].update(changed)
+            self.project.agents.get.return_value.as_dict.return_value = agent
+            with self.subTest(changed=changed), patch.object(release, 'azd', return_value=json.dumps({'agent_endpoint': endpoint})) as cli:
                 with self.assertRaisesRegex(ValueError, 'review the serving route'):
                     release.prepare('helper')
-                self.assertEqual(cli.call_count, 2)
+                self.assertEqual(cli.call_count, 1)
                 self.assertNotIn('versionSelector', yaml.safe_load(Path('azure.yaml').read_text())['services']['helper']['agentEndpoint'])
 
     def test_other_aliases_and_selector_types_are_not_overwritten(self):
@@ -91,12 +111,24 @@ class FoundryReleaseTests(unittest.TestCase):
     def test_bootstrap_alias_readback_failure_blocks_release_output(self):
         initial = copy.deepcopy(self.endpoint)
         initial['version_selector']['version_selection_rules'][0]['agent_version'] = '@latest'
-        bootstrap = {'name': 'second-catalog-helper', 'version': '1', 'status': 'Active'}
         with patch.object(release, 'azd', side_effect=[json.dumps({'agent_endpoint': initial}),
-                json.dumps(bootstrap), '', json.dumps({'agent_endpoint': initial})]):
+                '', json.dumps({'agent_endpoint': initial})]):
             with self.assertRaisesRegex(ValueError, 'verified'):
                 release.prepare('helper')
         self.assertFalse(Path(os.environ['GITHUB_OUTPUT']).exists())
+
+    def test_sdk_read_failure_cannot_fall_back_to_local_state_or_change_route(self):
+        endpoint = copy.deepcopy(self.endpoint)
+        endpoint['version_selector']['version_selection_rules'][0]['agent_version'] = '@latest'
+        for error in (ClientAuthenticationError('fixture authentication failure'), HttpResponseError('fixture read failure')):
+            self.project.agents.get.side_effect = error
+            with self.subTest(error=type(error).__name__), patch.object(release, 'azd', return_value=json.dumps({'agent_endpoint': endpoint})) as cli:
+                with self.assertRaisesRegex(RuntimeError, 'Bootstrap metadata read failed') as failure:
+                    release.prepare('helper')
+                self.assertNotIn('fixture', str(failure.exception))
+                self.assertEqual(cli.call_count, 1)
+                self.assertFalse(Path(os.environ['GITHUB_OUTPUT']).exists())
+                self.assertNotIn('versionSelector', yaml.safe_load(Path('azure.yaml').read_text())['services']['helper']['agentEndpoint'])
 
     def test_only_explicit_not_found_allows_bootstrap(self):
         with patch.object(release, 'azd', side_effect=subprocess.CalledProcessError(1, 'azd', stderr='HTTP 404')):
