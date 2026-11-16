@@ -12,6 +12,24 @@ spec.loader.exec_module(invoke)
 
 
 class InvocationTests(unittest.TestCase):
+    def test_raw_response_with_native_update_notice_preserves_the_json(self):
+        notice = ("WARNING: A new version of extension 'Foundry agents' is available: 1.0.0 -> 1.1.0\n"
+                  '  • To update: azd extension update azure.ai.agents\n'
+                  '  • To update all: azd extension update --all\n\n')
+        result = {'answer': 'Réponse containing WARNING: without truncating the JSON'}
+        for suffix in ('', notice):
+            with self.subTest(suffix=bool(suffix)):
+                self.assertEqual(invoke.response_json('HTTP/2.0 200 OK\n\n' + json.dumps(result) + suffix), result)
+
+    def test_failed_malformed_and_unrecognized_output_remain_rejected(self):
+        for raw in ('HTTP/2.0 403 Forbidden\n\n{"ok":true}', 'no HTTP response',
+                    'HTTP/2.0 200 OK\n\n{"truncated":', 'HTTP/2.0 200 OK\n\n[]',
+                    'HTTP/2.0 200 OK\n\n{"ok":true}{"other":true}',
+                    'HTTP/2.0 200 OK\n\n{"ok":true} unexpected-private-output'):
+            with self.subTest(raw=raw[:25]), self.assertRaises((RuntimeError, ValueError)) as error:
+                invoke.response_json(raw)
+            self.assertNotIn('unexpected-private-output', str(error.exception))
+
     def test_explicit_candidate_version_does_not_follow_a_changed_route(self):
         with tempfile.TemporaryDirectory() as directory:
             old = Path.cwd()
