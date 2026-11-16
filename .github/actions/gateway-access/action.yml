@@ -66,4 +66,4 @@ runs:
         RESOURCE_GROUP: ${{ inputs.resource-group }}
         CLUSTER: ${{ inputs.cluster }}
         RELEASE_RECORD: ${{ inputs.release-record }}
-      run: bash "${{ github.action_path }}/access.sh"
+      run: python3 "${{ github.action_path }}/access.py"

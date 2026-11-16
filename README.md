@@ -637,7 +637,8 @@ The child reconciles credentials/readers using shared templates. Deleting that
 registration performs native ordered cleanup. Keep the configured directory on the
 same runner between calls; the application owns orchestration and concurrency.
 
-The caller needs az, Helm, jq, Python/PyYAML and Git. The action detects missing tools
-and stops; it does not silently change runner dependencies. Existing native Foundry
-and Docker actions remain independent. CI/consumer pins must reference real reviewed
+The caller needs az, Helm, Python/PyYAML and Git. One Python entrypoint follows the
+existing native Foundry action pattern; it uses structured data in memory rather
+than embedded programs and intermediate conversion files. Helm is installed only
+when missing. Existing native Foundry and Docker actions remain independent. CI/consumer pins must reference real reviewed
 commits; local tests do not establish private-path reachability or live enforcement.

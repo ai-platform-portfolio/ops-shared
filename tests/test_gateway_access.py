@@ -6,7 +6,7 @@ import subprocess
 import tempfile
 import unittest
 
-SCRIPT = Path(__file__).resolve().parents[1] / '.github/actions/gateway-access/access.sh'
+SCRIPT = Path(__file__).resolve().parents[1] / '.github/actions/gateway-access/access.py'
 
 
 class GatewayAccessTests(unittest.TestCase):
@@ -37,7 +37,7 @@ class GatewayAccessTests(unittest.TestCase):
                    'AGENT_DIRECTORY': str(root), 'RUNNER_TEMP': str(root), 'RESOURCE_GROUP': 'example', 'CLUSTER': 'example',
                    'GITHUB_ENV': str(root / 'env'), 'GITHUB_OUTPUT': str(root / 'output'),
                    'AZ_RESPONSE': str(root / 'response.json'), 'HELM_RESPONSE': str(root / 'render.yaml')}
-            result = subprocess.run(['bash', str(SCRIPT)], env=env, capture_output=True, text=True)
+            result = subprocess.run([os.environ.get('PYTHON', 'python3'), str(SCRIPT)], env=env, capture_output=True, text=True)
             return result, (root / 'env').read_text() if (root / 'env').exists() else ''
 
     def test_unset_ceilings_block_before_connection_or_credentials(self):
@@ -57,3 +57,61 @@ class GatewayAccessTests(unittest.TestCase):
         result, exported = self.configure(exit_code=1)
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(exported, '')
+
+
+class ApplyTests(unittest.TestCase):
+    def setUp(self):
+        import importlib.util
+        from unittest.mock import patch
+        spec = importlib.util.spec_from_file_location('gateway_access', SCRIPT)
+        self.access = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.access)
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        root = Path(self.temp.name)
+        self.principal = '00000000-0000-0000-0000-000000000003'
+        self.record = root / 'release.json'
+        self.record.write_text(json.dumps({'agent': 'consumer', 'source_revision': 'a'*40, 'instance_principal_id': self.principal}))
+        environment = patch.dict(os.environ, {'RUNNER_TEMP': str(root), 'SERVICE': 'consumer',
+                                              'GITHUB_SHA': 'a'*40, 'RELEASE_RECORD': str(self.record)})
+        environment.start()
+        self.addCleanup(environment.stop)
+        self.access.directory().mkdir()
+        (self.access.directory() / 'values.json').write_text(json.dumps({'name': 'hosted-consumer', 'platform': {'modelGateway': {}}}))
+        self.actual = {'spec': {'sources': ['reviewed-source']}, 'status': {'sync': {
+            'status': 'Synced', 'comparedTo': {'sources': ['reviewed-source']}}, 'health': {'status': 'Healthy'}}}
+
+    def test_mismatched_release_stops_before_any_cluster_command(self):
+        from unittest.mock import patch
+        self.record.write_text(json.dumps({'agent': 'other-consumer'}))
+        with patch.object(self.access, 'invoke') as invoke, self.assertRaises(ValueError):
+            self.access.apply()
+        invoke.assert_not_called()
+
+    def test_principal_replacement_stops_before_registration(self):
+        from unittest.mock import patch
+        previous = {'spec': {'sources': [{'helm': {'valuesObject': {'platform': {'modelGateway': {'principalId': 'another-principal'}}}}}]}}
+        with patch.object(self.access, 'invoke', return_value=json.dumps(previous)) as invoke, self.assertRaisesRegex(ValueError, 'principal changed'):
+            self.access.apply()
+        self.assertEqual(invoke.call_count, 1)
+
+    def test_stale_healthy_status_cannot_admit_candidate(self):
+        from unittest.mock import patch
+        self.actual['status']['sync']['comparedTo']['sources'] = ['previous-source']
+        with patch.object(self.access, 'render', return_value='registration'), \
+             patch.object(self.access, 'invoke', side_effect=['', '', json.dumps(self.actual)]), \
+             self.assertRaisesRegex(ValueError, 'current source'):
+            self.access.apply()
+
+    def test_matching_current_source_and_principal_complete_registration(self):
+        from unittest.mock import patch
+        with patch.object(self.access, 'render', return_value='registration'), \
+             patch.object(self.access, 'invoke', side_effect=['', '', json.dumps(self.actual)]) as invoke:
+            self.access.apply()
+        self.assertEqual(invoke.call_count, 3)
+        remote_command = invoke.call_args_list[1].args[-1]
+        self.assertIn('kubectl apply -f registration.yaml', remote_command)
+        self.assertIn('set -eu', remote_command)
+        values = json.loads((self.access.directory() / 'values.json').read_text())
+        self.assertEqual(values['platform']['modelGateway']['principalId'], self.principal)
+        self.assertFalse(values['platform']['modelGateway']['connectionOnly'])
