@@ -21,6 +21,25 @@ def command(*arguments):
     return result.stdout
 
 
+def response_json(raw):
+    headers, separator, body = raw.partition('\n\n')
+    if not separator or not re.match(r'^HTTP/\S+ 2[0-9]{2}\b', headers):
+        raise RuntimeError('Hosted invocation did not return a successful response')
+    # azd 1.37.3 appends its extension-update notice even in raw mode.
+    # Accept that exact CLI suffix, never arbitrary text or another JSON value.
+    body = body.lstrip()
+    result, end = json.JSONDecoder().raw_decode(body)
+    notice = body[end:].strip()
+    if notice and not re.fullmatch(
+            r"WARNING: A new version of extension 'Foundry agents' is available: \S+ -> \S+\n"
+            r"  • To update: azd extension update azure\.ai\.agents\n"
+            r"  • To update all: azd extension update --all", notice):
+        raise RuntimeError('Unexpected output after hosted response')
+    if not isinstance(result, dict):
+        raise ValueError('Hosted response must be a JSON object')
+    return result
+
+
 def main():
     service = os.environ['SERVICE']
     # Materialize only the already-declared stable name, as in foundry-deploy.
@@ -41,11 +60,8 @@ def main():
     raw = command('ai', 'agent', 'invoke', service, '--version', version, '--new-session',
                   '--protocol', 'invocations', '--input-file', os.environ['REQUEST_FILE'],
                   '--output', 'raw', '--timeout', '180')
-    headers, separator, body = raw.partition('\n\n')
-    if not separator or not re.match(r'^HTTP/\S+ 2[0-9]{2}\b', headers):
-        raise RuntimeError('Hosted invocation did not return a successful response')
     response = Path(os.environ['RUNNER_TEMP']) / 'foundry-response.json'
-    response.write_text(json.dumps(json.loads(body)))
+    response.write_text(json.dumps(response_json(raw)))
     with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
         output.write(f'response={response}\nversion={version}\n')
 
