@@ -617,3 +617,27 @@ repository and explicit permissions. Keys stay in masked step outputs; tokens ar
 revoked at job end. This reuses an existing App PEM because the current native
 GitHub token action requires it; it does not create another key or establish
 keyless GitHub federation. Never run untrusted repository code in that job.
+
+## Hosted gateway access
+
+`.github/actions/gateway-access` is one scalar capability invoked for one native
+agent/environment. The caller supplies a verified application-chart checkout/SHA,
+source working directory, management AKS name/resource group and existing Azure
+OIDC login. Native AKS Run Command requires privileged cluster deployment authority;
+the action grants no Azure roles and creates no identities. It uses native Helm,
+kubectl and Argo reconciliation, not a custom deployment controller.
+
+Call `operation: configure` before native Foundry deploy. It reads the installed
+trusted `litellm-consumer-defaults`, refuses unset policy ceilings, renders public
+chart connections and exports versionless references/model aliases. It never reads
+credential values. After native deployment, call `operation: apply` with its actual
+release record. The action verifies source/agent/principal, renders only the chart's
+Argo registration, and waits for matching desired metadata plus Synced/Healthy.
+The child reconciles credentials/readers using shared templates. Deleting that
+registration performs native ordered cleanup. Keep the configured directory on the
+same runner between calls; the application owns orchestration and concurrency.
+
+The caller needs az, Helm, jq, Python/PyYAML and Git. The action detects missing tools
+and stops; it does not silently change runner dependencies. Existing native Foundry
+and Docker actions remain independent. CI/consumer pins must reference real reviewed
+commits; local tests do not establish private-path reachability or live enforcement.
