@@ -79,7 +79,7 @@ def apply():
     values = json.loads((directory() / 'values.json').read_text())
     name = values['name']
     values['platform']['modelGateway'].update(principalId=principal, connectionOnly=False)
-    existing = invoke('--command', f'kubectl get application/{name} --namespace=argocd --ignore-not-found -o json')
+    existing = invoke('--command', f'kubectl get applications.argoproj.io/{name} --namespace=argocd --ignore-not-found -o json')
     if existing:
         previous = json.loads(existing)['spec']['sources'][0]['helm']['valuesObject']['platform']['modelGateway']['principalId']
         if previous != principal:
@@ -90,13 +90,13 @@ def apply():
     invoke('--file', str(registration), '--command', f'''
 set -eu
 kubectl apply -f registration.yaml
-kubectl wait -n argocd --for=jsonpath='{{.status.sync.comparedTo.sources[0].helm.valuesObject.platform.modelGateway.principalId}}'={principal} application/{name} --timeout=240s
-kubectl wait -n argocd --for=jsonpath='{{.status.sync.status}}'=Synced application/{name} --timeout=240s
-kubectl wait -n argocd --for=jsonpath='{{.status.health.status}}'=Healthy application/{name} --timeout=240s
+kubectl wait -n argocd --for=jsonpath='{{.status.sync.comparedTo.sources[0].helm.valuesObject.platform.modelGateway.principalId}}'={principal} applications.argoproj.io/{name} --timeout=240s
+kubectl wait -n argocd --for=jsonpath='{{.status.sync.status}}'=Synced applications.argoproj.io/{name} --timeout=240s
+kubectl wait -n argocd --for=jsonpath='{{.status.health.status}}'=Healthy applications.argoproj.io/{name} --timeout=240s
 ''')
     # Separate JSON read avoids parsing mixed apply/wait output, and verifies the
     # full desired sources so stale Healthy status cannot admit a candidate.
-    actual = json.loads(invoke('--command', f'kubectl get application/{name} --namespace=argocd -o json'))
+    actual = json.loads(invoke('--command', f'kubectl get applications.argoproj.io/{name} --namespace=argocd -o json'))
     status = actual['status']
     if (status['sync']['status'] != 'Synced' or status['health']['status'] != 'Healthy'
             or status['sync']['comparedTo']['sources'] != actual['spec']['sources']):
