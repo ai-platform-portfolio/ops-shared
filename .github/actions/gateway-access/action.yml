@@ -1,0 +1,69 @@
+name: Hosted gateway access
+description: Configure one hosted consumer and register chart-owned credentials using its native principal.
+
+inputs:
+  operation:
+    description: configure before native deployment, or apply after its principal readback.
+    required: true
+
+  service:
+    description: Stable native environment identity for one agent.
+    required: true
+
+  working-directory:
+    description: Directory containing config/agent.yaml.
+    required: true
+
+  chart-directory:
+    description: Checkout of application-helm-chart at chart-revision.
+    required: true
+
+  chart-revision:
+    description: Actual immutable application chart commit.
+    required: true
+
+  resource-group:
+    description: Existing management AKS resource group.
+    required: true
+
+  cluster:
+    description: Existing management AKS name.
+    required: true
+
+  release-record:
+    description: Verified native Foundry release record; required for apply.
+    default: ''
+
+outputs:
+  connection:
+    description: Local public connection metadata path; contains no credential values.
+    value: ${{ steps.access.outputs.connection }}
+
+runs:
+  using: composite
+  steps:
+    - name: Check for Helm
+      id: helm
+      shell: bash
+      run: command -v helm >/dev/null 2>&1 && echo 'installed=true' >> "$GITHUB_OUTPUT" || true
+
+    - name: Install Helm when missing
+      if: steps.helm.outputs.installed != 'true'
+      uses: azure/setup-helm@b9e51907a09c216f16ebe8536097933489208112
+      with:
+        version: v3.22.1
+
+    # Caller logs in once with the existing Azure OIDC contract.
+    - name: Configure or reconcile this consumer
+      id: access
+      shell: bash
+      env:
+        OPERATION: ${{ inputs.operation }}
+        SERVICE: ${{ inputs.service }}
+        AGENT_DIRECTORY: ${{ inputs.working-directory }}
+        CHART_DIRECTORY: ${{ inputs.chart-directory }}
+        CHART_REVISION: ${{ inputs.chart-revision }}
+        RESOURCE_GROUP: ${{ inputs.resource-group }}
+        CLUSTER: ${{ inputs.cluster }}
+        RELEASE_RECORD: ${{ inputs.release-record }}
+      run: python3 "${{ github.action_path }}/access.py"
