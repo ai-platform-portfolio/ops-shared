@@ -111,6 +111,11 @@ class ApplyTests(unittest.TestCase):
         self.assertEqual(invoke.call_count, 3)
         remote_command = invoke.call_args_list[1].args[-1]
         self.assertIn('kubectl apply -f registration.yaml', remote_command)
+        for call in invoke.call_args_list:
+            self.assertNotIn(' application/', call.args[-1])
+        self.assertIn('applications.argoproj.io/hosted-consumer', remote_command)
+        self.assertIn('applications.argoproj.io/hosted-consumer', invoke.call_args_list[0].args[-1])
+        self.assertIn('applications.argoproj.io/hosted-consumer', invoke.call_args_list[2].args[-1])
         self.assertIn('set -eu', remote_command)
         values = json.loads((self.access.directory() / 'values.json').read_text())
         self.assertEqual(values['platform']['modelGateway']['principalId'], self.principal)
