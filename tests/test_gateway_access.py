@@ -81,6 +81,21 @@ class ApplyTests(unittest.TestCase):
         self.actual = {'spec': {'sources': ['reviewed-source']}, 'status': {'sync': {
             'status': 'Synced', 'comparedTo': {'sources': ['reviewed-source']}}, 'health': {'status': 'Healthy'}}}
 
+    def test_successful_command_output_can_be_null_empty_or_text(self):
+        from unittest.mock import patch
+        for logs, expected in [(None, ''), ('', ''), ('  result\n', 'result')]:
+            with self.subTest(logs=logs), \
+                 patch.dict(os.environ, {'RESOURCE_GROUP': 'example', 'CLUSTER': 'example'}), \
+                 patch.object(self.access, 'command', return_value=json.dumps({'exitCode': 0, 'logs': logs})):
+                self.assertEqual(self.access.invoke('--command', 'kubectl get --ignore-not-found'), expected)
+
+    def test_failed_command_with_null_output_still_raises(self):
+        from unittest.mock import patch
+        with patch.dict(os.environ, {'RESOURCE_GROUP': 'example', 'CLUSTER': 'example'}), \
+             patch.object(self.access, 'command', return_value=json.dumps({'exitCode': 1, 'logs': None})), \
+             self.assertRaisesRegex(RuntimeError, 'Gateway command failed'):
+            self.access.invoke('--command', 'kubectl get')
+
     def test_mismatched_release_stops_before_any_cluster_command(self):
         from unittest.mock import patch
         self.record.write_text(json.dumps({'agent': 'other-consumer'}))
