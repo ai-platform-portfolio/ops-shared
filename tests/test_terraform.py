@@ -45,18 +45,73 @@ class OpenTofuTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             private_id = "11111111-2222-3333-4444-555555555555"
-            (root / "plan.txt").write_text(f"subscription={private_id} backend=private-backend-name ```")
+            (root / "plan.txt").write_text(f"subscription={private_id} backend=private-backend-name aws=temporary-aws-secret ```")
             script = self.step("Publish redacted plan summary")["with"]["script"]
             harness = (
                 "const core = {summary: {addRaw: body => {process.stdout.write(body); return core.summary;}, write: async () => {}}};\n"
                 "const context = {eventName: 'workflow_dispatch'};\n"
                 f"(async () => {{\n{script}\n}})().catch(e => {{console.error(e); process.exit(1);}});"
             )
-            result = subprocess.run(["node", "-e", harness], env={**os.environ, "RUNNER_TEMP": directory, "PLAN_RESULT": "success", "TF_STATE_STORAGE_ACCOUNT": "private-backend-name"}, text=True, capture_output=True)
+            result = subprocess.run(["node", "-e", harness], env={**os.environ, "RUNNER_TEMP": directory, "PLAN_RESULT": "success", "TF_STATE_STORAGE_ACCOUNT": "private-backend-name", "AWS_SECRET_ACCESS_KEY": "temporary-aws-secret"}, text=True, capture_output=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertNotIn(private_id, result.stdout)
             self.assertNotIn("private-backend-name", result.stdout)
+            self.assertNotIn("temporary-aws-secret", result.stdout)
             self.assertIn("[redacted-id]", result.stdout)
+
+    def test_aws_authentication_is_optional_and_rejects_partial_configuration(self):
+        script = self.step("Validate AWS authentication inputs")["run"]
+        for region, plan, apply, success in [
+            ("", "", "", True),
+            ("eu-west-3", "plan-role", "apply-role", True),
+            ("eu-west-3", "", "", False),
+            ("", "plan-role", "apply-role", False),
+            ("eu-west-3", "plan-role", "", False),
+            ("eu-west-3", "", "apply-role", False),
+        ]:
+            with self.subTest(region=region, plan=plan, apply=apply):
+                result = subprocess.run(["bash", "-c", script], env={**os.environ, "AWS_REGION": region, "AWS_PLAN_ROLE": plan, "AWS_APPLY_ROLE": apply}, capture_output=True)
+                self.assertEqual(result.returncode == 0, success)
+
+        for phase in ("plan", "apply"):
+            steps = WORKFLOW["jobs"][phase]["steps"]
+            authentication = next(step for step in steps if step.get("name") == f"Authenticate AWS {phase} role")
+            self.assertEqual(authentication["if"], "inputs.aws-region != ''")
+            self.assertEqual(authentication["with"]["role-to-assume"], "${{ inputs.aws-" + phase + "-role-arn }}")
+            self.assertNotIn("aws-access-key-id", authentication["with"])
+            self.assertLess(steps.index(authentication), next(i for i, step in enumerate(steps) if step.get("name") == "Init"))
+
+    def test_matrix_roots_and_states_keep_separate_plan_comments(self):
+        script = self.step("Publish redacted plan summary")["with"]["script"]
+        with tempfile.TemporaryDirectory() as directory:
+            Path(directory, "plan.txt").write_text("example plan")
+            harness = """
+                const comments = [];
+                const core = {summary: {addRaw: () => core.summary, write: async () => {}}};
+                const context = {eventName: 'pull_request', repo: {owner: 'example', repo: 'infra'}, issue: {number: 1}};
+                const github = {
+                  paginate: async () => comments,
+                  rest: {issues: {
+                    listComments: () => {},
+                    createComment: async ({body}) => comments.push({id: comments.length, body, user: {login: 'github-actions[bot]'}}),
+                    updateComment: async ({comment_id, body}) => {comments[comment_id].body = body;}
+                  }}
+                };
+            """ + f"async function publish() {{\n{script}\n}}\n" + """
+                (async () => {
+                  for (const [root, state] of [['root-a', 'a.tfstate'], ['root-b', 'b.tfstate'], ['root-a', 'another.tfstate'], ['root-a', 'a.tfstate']]) {
+                    process.env.TF_ROOT = root;
+                    process.env.TF_STATE_KEY = state;
+                    await publish();
+                  }
+                  process.stdout.write(JSON.stringify(comments));
+                })().catch(e => {console.error(e); process.exit(1);});
+            """
+            result = subprocess.run(["node", "-e", harness], env={**os.environ, "RUNNER_TEMP": directory, "PLAN_RESULT": "success"}, text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            comments = json.loads(result.stdout)
+            self.assertEqual(len(comments), 3)
+            self.assertEqual(len({comment["body"].splitlines()[0] for comment in comments}), 3)
 
     def test_apply_runs_saved_plan_and_preserves_failure_through_redaction(self):
         script = next(step["run"] for step in WORKFLOW["jobs"]["apply"]["steps"] if step.get("name") == "Apply saved plan")

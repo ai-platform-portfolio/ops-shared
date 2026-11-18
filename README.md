@@ -35,12 +35,14 @@ It fetches `scripts/linear_issue.py` from this repository at a pinned commit and
 runs it against the caller's PR metadata. When changing the script, update the
 workflow's checkout pin to a commit containing that change.
 
-## Azure OpenTofu delivery
+## OpenTofu delivery
 
 `terraform.yml` operates on one caller-owned root and Azure backend key. It uses
 OpenTofu consistently for formatting, validation, PR plans and main-branch
 saved-plan applies. `tofu-version` pins the same CLI version in both jobs
-(default `1.13.9`). AWS configuration is omitted.
+(default `1.13.9`). Azure backend/provider OIDC is always configured. Optional AWS
+provider authentication uses the pinned official `aws-actions/configure-aws-credentials`
+action with separate plan/apply roles; existing Azure-only callers are unchanged.
 Inputs, jobs and steps follow the spacing used by the other shared workflows.
 
 ```yaml
@@ -89,9 +91,22 @@ sensitive data; repository Actions access controls protect them. Raw plan JSON
 is not published. Human-readable summaries and apply logs redact UUIDs in addition
 to GitHub secret masking and OpenTofu's sensitive-value handling. Mark sensitive
 configuration variables appropriately; redaction is not a general secret scanner.
-For multiple roots in one run, choose distinct state keys and `plan-artifact`
-names. State/bootstrap creation, Azure RBAC, provider registration and backend
+For multiple roots in one run, the **caller** owns its job matrix. Pass each row's
+`root`, unique `state-key` and unique `plan-artifact`; the shared workflow still
+handles one root per invocation. PR plan comments are keyed by root and state so
+matrix rows cannot overwrite one another. State/bootstrap creation, Azure RBAC, provider registration and backend
 deletion are outside this workflow.
+
+For an AWS-enabled root, supply all three non-secret inputs: `aws-region`,
+`aws-plan-role-arn` and `aws-apply-role-arn`. Partial configuration fails before
+backend initialization; omitting all three skips AWS authentication. The caller
+retains event/deployment policy and selects the roles. Existing AWS OIDC trust
+must admit the actual repository and `plan-environment` / `apply-environment`
+subjects. The plan role needs read/plan authority; the apply role needs the
+reviewed resource-management authority. No trust, role, access key or permission
+is created by the workflow. Existing Azure identity permissions, including Graph
+permissions for Entra roots, remain prerequisites. Configure both clouds' trusts
+for the **actual** GitHub subject; do not assume an environment name grants access.
 
 Reference: [Azure-only adaptation of the supplied workflow](https://github.com/library-bin-placeholder/ops-shared/blob/main/.github/workflows/terraform.yml).
 

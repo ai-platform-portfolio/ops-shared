@@ -1,4 +1,4 @@
-name: Plan and apply Azure OpenTofu
+name: Plan and apply OpenTofu
 
 on:
   workflow_call:
@@ -39,6 +39,21 @@ on:
         description: Saved-plan artifact name; choose a distinct name for each invocation in a run.
         type: string
         default: opentofu-plan
+
+      aws-region:
+        description: Optional AWS region for OIDC authentication; requires both role ARNs.
+        type: string
+        default: ''
+
+      aws-plan-role-arn:
+        description: Optional existing AWS role trusted for the plan environment.
+        type: string
+        default: ''
+
+      aws-apply-role-arn:
+        description: Optional existing AWS role trusted for the apply environment.
+        type: string
+        default: ''
 
     secrets:
       AZURE_TENANT_ID:
@@ -105,6 +120,30 @@ jobs:
           tofu_version: ${{ inputs.tofu-version }}
           tofu_wrapper: false
 
+      - name: Validate AWS authentication inputs
+        shell: bash
+        env:
+          AWS_REGION: ${{ inputs.aws-region }}
+          AWS_PLAN_ROLE: ${{ inputs.aws-plan-role-arn }}
+          AWS_APPLY_ROLE: ${{ inputs.aws-apply-role-arn }}
+        run: |
+          set -euo pipefail
+
+          if [[ -n "$AWS_REGION$AWS_PLAN_ROLE$AWS_APPLY_ROLE" ]] && \
+             [[ -z "$AWS_REGION" || -z "$AWS_PLAN_ROLE" || -z "$AWS_APPLY_ROLE" ]]; then
+            echo 'AWS OIDC requires aws-region, aws-plan-role-arn and aws-apply-role-arn together.' >&2
+            exit 1
+          fi
+
+      - name: Authenticate AWS plan role
+        if: inputs.aws-region != ''
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          aws-region: ${{ inputs.aws-region }}
+          role-to-assume: ${{ inputs.aws-plan-role-arn }}
+          unset-current-credentials: true
+          mask-aws-account-id: true
+
       - name: Init
         run: |
           tofu -chdir="$TF_ROOT" init -input=false -lockfile=readonly -no-color \
@@ -151,7 +190,8 @@ jobs:
             let plan = fs.existsSync(path) ? fs.readFileSync(path, 'utf8') : 'Plan could not run; see the workflow logs.';
 
             for (const [key, value] of Object.entries(process.env)) {
-              if (value && /^(ARM_|TF_STATE_)/.test(key) && !['true', 'false'].includes(value)) {
+              const credential = /^(ARM_|TF_STATE_)/.test(key) || ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN'].includes(key);
+              if (value && credential && !['true', 'false'].includes(value)) {
                 plan = plan.split(value).join('[redacted]');
               }
             }
@@ -159,7 +199,8 @@ jobs:
             plan = plan.replace(/\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b/gi, '[redacted-id]')
               .replace(/```/g, "'''").slice(0, 50000);
 
-            const marker = '<!-- terraform-plan -->';
+            const scope = require('crypto').createHash('sha256').update(JSON.stringify([process.env.TF_ROOT, process.env.TF_STATE_KEY])).digest('hex');
+            const marker = `<!-- terraform-plan:${scope} -->`;
             const body = `${marker}\n### OpenTofu plan (${process.env.PLAN_RESULT})\n\n<details><summary>Show plan</summary>\n\n\`\`\`hcl\n${plan}\n\`\`\`\n</details>`;
             await core.summary.addRaw(body).write();
 
@@ -205,6 +246,15 @@ jobs:
         with:
           tofu_version: ${{ inputs.tofu-version }}
           tofu_wrapper: false
+
+      - name: Authenticate AWS apply role
+        if: inputs.aws-region != ''
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          aws-region: ${{ inputs.aws-region }}
+          role-to-assume: ${{ inputs.aws-apply-role-arn }}
+          unset-current-credentials: true
+          mask-aws-account-id: true
 
       - name: Init
         run: |
