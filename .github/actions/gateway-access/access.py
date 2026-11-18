@@ -20,7 +20,7 @@ def invoke(*arguments):
                                 '--name', os.environ['CLUSTER'], *arguments, '--output', 'json'))
     if result.get('exitCode') != 0:
         raise RuntimeError(f'Gateway command failed; Azure operation: {result.get("id", "unavailable")}')
-    return result['logs'].strip()
+    return (result['logs'] or '').strip()
 
 
 def render(values, *, registration=False):
