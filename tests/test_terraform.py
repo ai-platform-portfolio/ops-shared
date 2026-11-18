@@ -112,6 +112,8 @@ class OpenTofuTests(unittest.TestCase):
             comments = json.loads(result.stdout)
             self.assertEqual(len(comments), 3)
             self.assertEqual(len({comment["body"].splitlines()[0] for comment in comments}), 3)
+            self.assertIn("### OpenTofu plan: `root-a` (success)", comments[0]["body"])
+            self.assertIn("### OpenTofu plan: `root-b` (success)", comments[1]["body"])
 
     def test_apply_runs_saved_plan_and_preserves_failure_through_redaction(self):
         script = next(step["run"] for step in WORKFLOW["jobs"]["apply"]["steps"] if step.get("name") == "Apply saved plan")

@@ -201,7 +201,7 @@ jobs:
 
             const scope = require('crypto').createHash('sha256').update(JSON.stringify([process.env.TF_ROOT, process.env.TF_STATE_KEY])).digest('hex');
             const marker = `<!-- terraform-plan:${scope} -->`;
-            const body = `${marker}\n### OpenTofu plan (${process.env.PLAN_RESULT})\n\n<details><summary>Show plan</summary>\n\n\`\`\`hcl\n${plan}\n\`\`\`\n</details>`;
+            const body = `${marker}\n### OpenTofu plan: \`${process.env.TF_ROOT}\` (${process.env.PLAN_RESULT})\n\n<details><summary>Show plan</summary>\n\n\`\`\`hcl\n${plan}\n\`\`\`\n</details>`;
             await core.summary.addRaw(body).write();
 
             if (context.eventName === 'pull_request') {
