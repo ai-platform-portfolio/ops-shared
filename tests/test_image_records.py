@@ -162,8 +162,8 @@ elif args[:2] == ['containerapp', 'show']: print('pv-123-pr-7.example.azureconta
             self.assertEqual(output, '')
 
     def test_remote_task_keeps_provenance_digest_and_native_failure(self):
-        workflow = yaml.safe_load((ROOT / '.github/workflows/docker.yml').read_text())
-        step = next(item for item in workflow['jobs']['docker']['steps'] if item.get('id') == 'remote')
+        action = yaml.safe_load((ROOT / '.github/actions/acr-build/action.yml').read_text())
+        step = action['runs']['steps'][0]
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source = root / 'source'
@@ -178,7 +178,7 @@ elif args[:2] == ['containerapp', 'show']: print('pv-123-pr-7.example.azureconta
                           "print('sha256:' + 'a' * 64)\n")
             az.chmod(0o755)
             env = {**os.environ, 'PATH': f'{root}:{os.environ["PATH"]}', 'CONTEXT': 'source', 'DOCKERFILE': '',
-                   'RUNNER_TEMP': directory,
+                   'RUNNER_TEMP': directory, 'REGISTRY': 'localacrk8s',
                    'IMAGE': 'localacrk8s.azurecr.io/site:preview-7-commit', 'TASK': str(root / 'task.json'),
                    'GITHUB_OUTPUT': str(root / 'output'), 'GITHUB_SERVER_URL': 'https://github.com',
                    'GITHUB_REPOSITORY': 'example/site', 'SOURCE_SHA': 'c' * 40}
