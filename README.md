@@ -170,7 +170,7 @@ HTTPS URL/SHA256 in requirements.txt with hash/binary-only installs.
 ## Azure registry building blocks
 
 The existing Docker workflow accepts `build-engine: acr` to offload published
-builds to standard ACR Tasks. It uploads the checked-out context with `az acr run`,
+builds to standard ACR Tasks. It uploads the checked-out context with `az acr build`,
 preserves OCI source/revision labels, and returns the registry digest. The same
 Trivy gate and optional image record apply to either engine. Default builds retain
 BuildKit; forks/build-only runs use local Docker without Azure credentials. ACR

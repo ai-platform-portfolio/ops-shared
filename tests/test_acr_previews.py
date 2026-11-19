@@ -103,9 +103,10 @@ elif args[:2] == ['containerapp', 'show']: print('pv-123-pr-7.example.azureconta
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / 'Dockerfile').write_text('FROM scratch\n')
+            (root / '.dockerignore').write_text('*\n')
             az = root / 'az'
             az.write_text(f'#!{sys.executable}\nimport json,os,sys\nfrom pathlib import Path\n'
-                          "if sys.argv[1:3] == ['acr', 'run']:\n"
+                          "if sys.argv[1:3] == ['acr', 'build']:\n"
                           " task = Path(sys.argv[-1]) / sys.argv[sys.argv.index('--file') + 1]\n"
                           " Path(os.environ['TASK']).write_text(task.read_text()); sys.exit(int(os.environ.get('FAIL', '0')))\n"
                           "print('sha256:' + 'a' * 64)\n")
@@ -116,10 +117,12 @@ elif args[:2] == ['containerapp', 'show']: print('pv-123-pr-7.example.azureconta
                    'GITHUB_REPOSITORY': 'example/site', 'SOURCE_SHA': 'c' * 40}
             result = subprocess.run(['bash', '-c', step['run']], env=env, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
-            task = json.loads((root / 'task.json').read_text())
-            self.assertIn('org.opencontainers.image.revision=' + 'c' * 40, task['steps'][0]['build'])
-            self.assertEqual(task['steps'][1]['push'], [env['IMAGE']])
-            self.assertEqual(list(root.glob('.acr-task-*.yaml')), [])
+            task = (root / 'task.json').read_text()
+            self.assertTrue(task.startswith('FROM scratch\n'))
+            self.assertIn('org.opencontainers.image.revision="' + 'c' * 40 + '"', task)
+            self.assertIn('org.opencontainers.image.source="https://github.com/example/site"', task)
+            self.assertEqual(list(root.glob('.acr-build-*.Dockerfile')), [])
+            self.assertEqual((root / 'Dockerfile').read_text(), 'FROM scratch\n')
             self.assertIn('digest=sha256:' + 'a' * 64, (root / 'output').read_text())
             (root / 'output').unlink()
             failed = subprocess.run(['bash', '-c', step['run']], env={**env, 'FAIL': '1'}, capture_output=True)

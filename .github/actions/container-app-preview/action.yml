@@ -68,7 +68,7 @@ runs:
           const {data: pr} = await github.rest.pulls.get({...context.repo, pull_number: context.issue.number});
           if (process.env.OPERATION === 'deploy' && (pr.state !== 'open' || pr.head.sha !== context.payload.pull_request.head.sha)) return;
           const marker = '<!-- container-app-preview -->';
-          const body = `${marker}\n${process.env.OPERATION === 'delete' ? 'Preview removed.' : `[Open preview](${process.env.PREVIEW_URL}) — source \`${pr.head.sha}\`.`}`;
+          const body = `${marker}\n${process.env.OPERATION === 'delete' ? 'Preview removed.' : `[Open preview](${process.env.PREVIEW_URL}) — built revision \`${context.sha}\`.`}`;
           await core.summary.addRaw(body).write();
           const params = {...context.repo, issue_number: pr.number};
           const comments = await github.paginate(github.rest.issues.listComments, params);
