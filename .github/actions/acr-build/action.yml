@@ -1,0 +1,62 @@
+name: Build remotely with ACR Tasks
+description: Upload a checked-out Docker context, publish in ACR and return its digest.
+
+inputs:
+  registry:
+    description: ACR name; Azure CLI must already be authenticated.
+    required: true
+
+  image:
+    description: Full tagged image reference in the selected registry.
+    required: true
+
+  context:
+    description: Caller-relative build context.
+    default: .
+
+  file:
+    description: Caller-relative Dockerfile; defaults to the context's Dockerfile.
+    default: ''
+
+  revision:
+    description: Verified checkout commit SHA for OCI provenance.
+    required: true
+
+outputs:
+  digest:
+    description: Published sha256 image digest.
+    value: ${{ steps.build.outputs.digest }}
+
+runs:
+  using: composite
+  steps:
+    - name: Build and publish
+      id: build
+      shell: bash
+      env:
+        REGISTRY: ${{ inputs.registry }}
+        CONTEXT: ${{ inputs.context }}
+        DOCKERFILE: ${{ inputs.file }}
+        IMAGE: ${{ inputs.image }}
+        SOURCE_SHA: ${{ inputs.revision }}
+      run: |
+        set -euo pipefail
+
+        [[ "$IMAGE" == "$REGISTRY.azurecr.io/"* && "$SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]]
+        dockerfile=$(python3 -c 'import os,sys; print(os.path.relpath(*sys.argv[1:]))' "${DOCKERFILE:-$CONTEXT/Dockerfile}" "$CONTEXT")
+        [[ "$dockerfile" != ../* ]] || { echo 'ACR builds require a Dockerfile inside the build context.' >&2; exit 1; }
+
+        # Native upload includes this file despite restrictive .dockerignore rules.
+        # Keep generated provenance outside the application's COPY context.
+        buildfile=$(mktemp "$RUNNER_TEMP/acr-build-XXXXXX.Dockerfile")
+        trap 'rm -f "$buildfile"' EXIT
+        cat "$CONTEXT/$dockerfile" > "$buildfile"
+        printf '\nLABEL org.opencontainers.image.source="%s" org.opencontainers.image.revision="%s"\n' \
+          "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" "$SOURCE_SHA" >> "$buildfile"
+        az acr build --registry "$REGISTRY" --image "${IMAGE#"$REGISTRY.azurecr.io/"}" \
+          --file "$buildfile" "$CONTEXT"
+
+        digest=$(az acr repository show --name "$REGISTRY" \
+          --image "${IMAGE#"$REGISTRY.azurecr.io/"}" --query digest --output tsv)
+        [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]] || { echo 'Published digest is missing.' >&2; exit 1; }
+        echo "digest=$digest" >> "$GITHUB_OUTPUT"

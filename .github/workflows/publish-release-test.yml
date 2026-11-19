@@ -5,6 +5,7 @@ on:
     paths:
       - .github/actions/publish-release/**
       - .github/actions/acr-*/**
+      - .github/actions/container-app-preview/**
       - .github/actions/atlas-repository/**
       - .github/actions/foundry-deploy/**
       - tests/test_*.py
@@ -19,6 +20,7 @@ on:
     paths:
       - .github/actions/publish-release/**
       - .github/actions/acr-*/**
+      - .github/actions/container-app-preview/**
       - .github/actions/atlas-repository/**
       - .github/actions/foundry-deploy/**
       - tests/test_*.py

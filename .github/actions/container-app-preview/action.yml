@@ -1,0 +1,58 @@
+name: Container App PR preview
+description: Create/update or remove a same-repository PR app using native Azure CLI.
+
+inputs:
+  resource-group:
+    required: true
+    description: Existing resource group for preview apps and identities.
+
+  environment:
+    required: true
+    description: Existing Container Apps environment in that resource group.
+
+  registry:
+    required: true
+    description: Existing ACR name.
+
+  image:
+    default: ''
+    description: Scanned digest-pinned image; omitted on close.
+
+  env-vars:
+    default: '{}'
+    description: JSON map of non-secret runtime environment variables.
+
+  reader-scope:
+    default: ''
+    description: Optional Azure scope for read-only runtime metadata access.
+
+  target-port:
+    default: '8080'
+    description: Container HTTP port.
+
+  health-path:
+    default: /healthz
+    description: HTTP readiness path.
+
+outputs:
+  url:
+    description: Ready preview HTTPS URL; empty on cleanup or a stale run.
+    value: ${{ steps.preview.outputs.url }}
+
+runs:
+  using: composite
+  steps:
+    - name: Reconcile PR preview
+      id: preview
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        RESOURCE_GROUP: ${{ inputs.resource-group }}
+        ENVIRONMENT: ${{ inputs.environment }}
+        REGISTRY: ${{ inputs.registry }}
+        IMAGE: ${{ inputs.image }}
+        ENV_VARS: ${{ inputs.env-vars }}
+        READER_SCOPE: ${{ inputs.reader-scope }}
+        TARGET_PORT: ${{ inputs.target-port }}
+        HEALTH_PATH: ${{ inputs.health-path }}
+      run: bash "$GITHUB_ACTION_PATH/preview.sh"
