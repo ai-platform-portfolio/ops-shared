@@ -200,31 +200,13 @@ jobs:
       - name: Build remotely with ACR Tasks
         id: remote
         if: inputs.build-engine == 'acr' && env.PUBLISH == 'true'
-        shell: bash
-        env:
-          CONTEXT: ${{ inputs.context }}
-          DOCKERFILE: ${{ inputs.file }}
-          IMAGE: ${{ steps.image-tag.outputs.image }}
-        run: |
-          set -euo pipefail
-
-          dockerfile=$(python3 -c 'import os,sys; print(os.path.relpath(*sys.argv[1:]))' "${DOCKERFILE:-$CONTEXT/Dockerfile}" "$CONTEXT")
-          [[ "$dockerfile" != ../* ]] || { echo 'ACR builds require a Dockerfile inside the build context.' >&2; exit 1; }
-
-          # Native build uploads the selected Dockerfile even when excluded by
-          # .dockerignore. Add the same OCI labels without editing caller source.
-          buildfile=$(mktemp "$RUNNER_TEMP/acr-build-XXXXXX.Dockerfile")
-          trap 'rm -f "$buildfile"' EXIT
-          cat "$CONTEXT/$dockerfile" > "$buildfile"
-          printf '\nLABEL org.opencontainers.image.source="%s" org.opencontainers.image.revision="%s"\n' \
-            "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" "$SOURCE_SHA" >> "$buildfile"
-          az acr build --registry localacrk8s --image "${IMAGE#localacrk8s.azurecr.io/}" \
-            --file "$buildfile" "$CONTEXT"
-
-          digest=$(az acr repository show --name localacrk8s \
-            --image "${IMAGE#localacrk8s.azurecr.io/}" --query digest --output tsv)
-          [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]] || { echo 'Published digest is missing.' >&2; exit 1; }
-          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+        uses: ai-platform-portfolio/ops-shared/.github/actions/acr-build@60663401af6f38e8dff947a7a310785a3b12d7d4
+        with:
+          registry: localacrk8s
+          context: ${{ inputs.context }}
+          file: ${{ inputs.file }}
+          image: ${{ steps.image-tag.outputs.image }}
+          revision: ${{ steps.source.outputs.revision }}
 
       - name: Scan image before releasing the build
         if: inputs.scan

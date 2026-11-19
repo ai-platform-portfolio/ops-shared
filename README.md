@@ -170,13 +170,17 @@ HTTPS URL/SHA256 in requirements.txt with hash/binary-only installs.
 ## Azure registry building blocks
 
 The existing Docker workflow accepts `build-engine: acr` to offload published
-builds to standard ACR Tasks. It uploads the checked-out context with `az acr build`,
+builds to standard ACR Tasks through `.github/actions/acr-build`. The action owns
+Dockerfile preparation, OCI labels, `az acr build` and digest lookup; the workflow
+only supplies inputs and retains the common authentication/scan/artifact gates.
+The action uploads the checked-out context,
 preserves OCI source/revision labels, and returns the registry digest. The same
 Trivy gate and optional image record apply to either engine. Default builds retain
 BuildKit; forks/build-only runs use local Docker without Azure credentials. ACR
 requires the Dockerfile inside the context and uses its own build cache rather
 than the GitHub BuildKit cache. No PAT, source webhook, dedicated pool or Terraform
 state is needed. The Azure OIDC identity needs permission to schedule task runs.
+When updating the build action, update its immutable pin in `docker.yml` too.
 
 `.github/actions/container-app-preview` uses an existing Azure CLI login and the
 PR's GitHub token. Supply `resource-group`, `environment`, `registry`, a scanned
