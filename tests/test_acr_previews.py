@@ -19,7 +19,7 @@ IMAGE = 'example.azurecr.io/site@sha256:' + 'a' * 64
 
 
 class PreviewTests(unittest.TestCase):
-    def run_preview(self, *, closed=False, existing=False, empty=False, unowned=False, stale=False, fail=False, repo='example/site'):
+    def run_preview(self, *, closed=False, existing=False, empty=False, unowned=False, stale=False, fail=False, repo='example/site', comment=True):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             event = {'pull_request': {'number': 7, 'head': {'sha': 'current'}}}
@@ -33,7 +33,10 @@ import json,os,sys
 from pathlib import Path
 args = sys.argv[1:]
 with open(os.environ['COMMANDS'], 'a') as f: f.write(json.dumps([Path(sys.argv[0]).name, *args]) + '\\n')
-if Path(sys.argv[0]).name == 'gh': print({json.dumps(json.dumps(pr))}); sys.exit()
+if Path(sys.argv[0]).name == 'gh':
+    if '/pulls/' in args[1]: print({json.dumps(json.dumps(pr))})
+    elif '--jq' in args and {comment!r}: print('42')
+    sys.exit()
 if args[:2] in [['containerapp', 'list'], ['identity', 'list']]:
     print({json.dumps('' if empty else json.dumps(resource) if existing else 'null')}); sys.exit()
 if args[:2] == ['acr', 'show']: print('{{"id":"/registry/example","server":"example.azurecr.io"}}')
@@ -50,6 +53,7 @@ elif args[:2] == ['containerapp', 'show']: print('pv-123-pr-7.example.azureconta
             env = {**os.environ, 'PATH': f'{root}:{os.environ["PATH"]}', 'COMMANDS': str(root / 'commands'),
                    'GITHUB_EVENT_PATH': str(root / 'event.json'), 'GITHUB_REPOSITORY_ID': '123',
                    'GITHUB_REPOSITORY': 'example/site', 'GITHUB_EVENT_NAME': 'pull_request',
+                   'GITHUB_SHA': 'c' * 40, 'GITHUB_STEP_SUMMARY': str(root / 'summary'),
                    'GITHUB_OUTPUT': str(root / 'output'), 'RESOURCE_GROUP': 'preview-group', 'ENVIRONMENT': 'existing',
                    'REGISTRY': 'example', 'IMAGE': IMAGE, 'READER_SCOPE': '/subscriptions/example',
                    'TARGET_PORT': '8080', 'HEALTH_PATH': '/healthz',
@@ -72,6 +76,10 @@ elif args[:2] == ['containerapp', 'show']: print('pv-123-pr-7.example.azureconta
         roles = [cmd[cmd.index('--role') + 1] for cmd in commands if cmd[:4] == ['az', 'role', 'assignment', 'create']]
         self.assertEqual(roles, ['AcrPull', 'Reader'])
         self.assertIn('url=https://pv-123-pr-7.example.azurecontainerapps.io', output)
+        report = next(cmd for cmd in commands if '--method' in cmd)
+        self.assertIn('PATCH', report)
+        self.assertIn('repos/example/site/issues/comments/42', report)
+        self.assertTrue(any('built revision `' + 'c' * 40 in arg for arg in report))
         result, commands, _ = self.run_preview(existing=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(any(cmd[:3] == ['az', 'containerapp', 'update'] for cmd in commands))
@@ -85,9 +93,12 @@ elif args[:2] == ['containerapp', 'show']: print('pv-123-pr-7.example.azureconta
         identity = next(i for i, cmd in enumerate(commands) if cmd[:3] == ['az', 'identity', 'delete'])
         self.assertTrue(app < min(roles) <= max(roles) < identity)
         self.assertIn('operation=delete', output)
-        result, commands, _ = self.run_preview(closed=True, empty=True)
+        result, commands, _ = self.run_preview(closed=True, empty=True, comment=False)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(any('delete' in cmd for cmd in commands))
+        report = next(cmd for cmd in commands if '--method' in cmd)
+        self.assertIn('POST', report)
+        self.assertIn('repos/example/site/issues/7/comments', report)
 
     def test_stale_fork_unowned_and_failed_grants_do_not_deploy(self):
         for options, success in [({'stale': True}, True), ({'repo': 'attacker/fork'}, False),

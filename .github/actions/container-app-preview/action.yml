@@ -56,22 +56,3 @@ runs:
         TARGET_PORT: ${{ inputs.target-port }}
         HEALTH_PATH: ${{ inputs.health-path }}
       run: bash "$GITHUB_ACTION_PATH/preview.sh"
-
-    - name: Update preview link
-      if: steps.preview.outputs.operation != ''
-      uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
-      env:
-        PREVIEW_URL: ${{ steps.preview.outputs.url }}
-        OPERATION: ${{ steps.preview.outputs.operation }}
-      with:
-        script: |
-          const {data: pr} = await github.rest.pulls.get({...context.repo, pull_number: context.issue.number});
-          if (process.env.OPERATION === 'deploy' && (pr.state !== 'open' || pr.head.sha !== context.payload.pull_request.head.sha)) return;
-          const marker = '<!-- container-app-preview -->';
-          const body = `${marker}\n${process.env.OPERATION === 'delete' ? 'Preview removed.' : `[Open preview](${process.env.PREVIEW_URL}) — built revision \`${context.sha}\`.`}`;
-          await core.summary.addRaw(body).write();
-          const params = {...context.repo, issue_number: pr.number};
-          const comments = await github.paginate(github.rest.issues.listComments, params);
-          const existing = comments.find(c => c.user.login === 'github-actions[bot]' && c.body?.includes(marker));
-          if (existing) await github.rest.issues.updateComment({...context.repo, comment_id: existing.id, body});
-          else await github.rest.issues.createComment({...params, body});

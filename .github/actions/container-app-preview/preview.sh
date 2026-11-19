@@ -16,6 +16,20 @@ if [[ $(jq -r .state <<< "$pr") == open ]]; then
   operation=deploy
 fi
 
+report() {
+  pr=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$number")
+  if [[ "$operation" == deploy && ($(jq -r .state <<< "$pr") != open || $(jq -r '.head.sha' <<< "$pr") != "$head") ]]; then return; fi
+  local comment body endpoint="repos/$GITHUB_REPOSITORY/issues/$number/comments" method=POST
+  comment=$(gh api "$endpoint" --paginate --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | contains("<!-- container-app-preview -->"))) | .id')
+  if [[ -n "$comment" ]]; then
+    endpoint="repos/$GITHUB_REPOSITORY/issues/comments/${comment%%$'\n'*}"
+    method=PATCH
+  fi
+  printf -v body '<!-- container-app-preview -->\n%s' "$1"
+  gh api "$endpoint" --method "$method" -f "body=$body" --silent
+  printf '%s\n' "$1" >> "$GITHUB_STEP_SUMMARY"
+}
+
 # Listing distinguishes absence from a failed lookup; authentication/network
 # errors fail the action rather than being mistaken for a missing resource.
 app=$(az containerapp list --resource-group "$RESOURCE_GROUP" --query "[?name=='$preview'] | [0]" --output json)
@@ -37,13 +51,12 @@ if [[ "$operation" == delete ]]; then
     principal=$(jq -r .principalId <<< "$identity")
     assignments=$(az role assignment list --assignee-object-id "$principal" --all --query '[].id' --output tsv)
     if [[ -n "$assignments" ]]; then
-      while IFS= read -r assignment; do
-        az role assignment delete --ids "$assignment" --output none
-      done <<< "$assignments"
+      printf '%s\n' "$assignments" | xargs az role assignment delete --output none --ids
     fi
     az identity delete --name "$preview" --resource-group "$RESOURCE_GROUP"
   fi
   echo 'operation=delete' >> "$GITHUB_OUTPUT"
+  report 'Preview removed.'
   exit 0
 fi
 
@@ -63,11 +76,9 @@ principal=$(jq -r .principalId <<< "$identity")
 identity_id=$(jq -r .id <<< "$identity")
 
 grant() {
-  local scope=$1 role=$2
-  if [[ $(az role assignment list --assignee-object-id "$principal" --scope "$scope" --role "$role" --query 'length(@)' --output tsv) == 0 ]]; then
-    az role assignment create --assignee-object-id "$principal" --assignee-principal-type ServicePrincipal \
-      --scope "$scope" --role "$role" --output none
-  fi
+  # Azure CLI handles an already-existing assignment natively.
+  az role assignment create --assignee-object-id "$principal" --assignee-principal-type ServicePrincipal \
+    --scope "$1" --role "$2" --output none
 }
 grant "$(jq -r .id <<< "$registry")" AcrPull
 if [[ -n "$READER_SCOPE" ]]; then grant "$READER_SCOPE" Reader; fi
@@ -94,3 +105,4 @@ curl --fail --silent --show-error --retry 12 --retry-all-errors --retry-delay 5 
   --connect-timeout 10 --max-time 20 "https://${fqdn}${HEALTH_PATH}" > /dev/null
 echo 'operation=deploy' >> "$GITHUB_OUTPUT"
 echo "url=https://$fqdn" >> "$GITHUB_OUTPUT"
+report "[Open preview](https://$fqdn) — built revision \`$GITHUB_SHA\`."

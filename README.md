@@ -186,10 +186,11 @@ AcrPull and, only if requested, Reader at that scope; it never uses a production
 runtime identity. Defaults are public generated HTTPS, port8080, 0.25vCPU/0.5GiB,
 replicas0–1 and `/healthz`. It updates one PR comment with the ready URL.
 
-Call after tests/build/scan for same-repository PRs. Call again without an image
-from an unfiltered, close-only `pull_request_target` workflow with no PR checkout.
-Both caller jobs must use the same non-cancelling concurrency group with
-`queue: max`. The action checks live PR state/head and resource ownership tags;
+Call after tests/build/scan for same-repository PRs, and for unfiltered close-only
+`pull_request_target` events with no PR checkout. One caller job can handle both:
+skip builds on close and use `always()` so skipped build dependencies do not block
+cleanup. Serialize that job with a non-cancelling concurrency group and `queue: max`.
+The action checks live PR state/head and resource ownership tags;
 closed PRs delete the app before grants/identity. Rerun failures to retry. Keep the
 registry/environment outside this lifecycle; image retention is independent.
 Same-repository workflow authors and the deployer remain trusted. Shared Container
