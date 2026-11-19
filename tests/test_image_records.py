@@ -1,5 +1,6 @@
 """Exercise image identity and PR-preview lifecycle boundaries without Azure writes."""
 
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -7,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import Mock, patch
 
 import yaml
 
@@ -94,9 +96,9 @@ if args[:2] in [['containerapp', 'list'], ['identity', 'list']]:
     print({json.dumps('' if empty else json.dumps(resource) if existing else 'null')}); sys.exit()
 if args[:2] == ['acr', 'show']: print('{{"id":"/registry/example","server":"example.azurecr.io"}}')
 elif args[:3] == ['containerapp', 'env', 'show']: print('uksouth')
-elif args[:2] == ['identity', 'create']: print({json.dumps(json.dumps(IDENTITY))})
-elif args[:3] == ['role', 'assignment', 'list']: print('/role/pull\\n/role/read' if '--all' in args else '0')
-elif args[:3] == ['role', 'assignment', 'create'] and {fail!r}: sys.exit(1)
+elif args[:2] == ['identity', 'show']:
+    if {fail!r}: sys.exit(1)
+    print({json.dumps(json.dumps(IDENTITY))})
 elif args[:2] == ['containerapp', 'show']: print('pv-123-pr-7.example.azurecontainerapps.io')
 '''
             for command in ('az', 'gh', 'curl'):
@@ -108,7 +110,7 @@ elif args[:2] == ['containerapp', 'show']: print('pv-123-pr-7.example.azureconta
                    'GITHUB_REPOSITORY': 'example/site', 'GITHUB_EVENT_NAME': 'pull_request',
                    'GITHUB_SHA': 'c' * 40, 'GITHUB_STEP_SUMMARY': str(root / 'summary'),
                    'GITHUB_OUTPUT': str(root / 'output'), 'RESOURCE_GROUP': 'preview-group', 'ENVIRONMENT': 'existing',
-                   'REGISTRY': 'example', 'IMAGE': IMAGE, 'READER_SCOPE': '/subscriptions/example',
+                   'REGISTRY': 'example', 'IMAGE': IMAGE, 'MANAGED_IDENTITY': 'permanent',
                    'TARGET_PORT': '8080', 'HEALTH_PATH': '/healthz',
                    'ENV_VARS': json.dumps({'LITERAL': '$(touch compromised) with spaces'})}
             result = subprocess.run(['bash', str(SCRIPT)], env=env, cwd=root, capture_output=True, text=True)
@@ -117,7 +119,7 @@ elif args[:2] == ['containerapp', 'show']: print('pv-123-pr-7.example.azureconta
             output = (root / 'output').read_text() if (root / 'output').exists() else ''
             return result, commands, output
 
-    def test_create_update_and_read_only_identity(self):
+    def test_create_update_and_permanent_identity(self):
         result, commands, output = self.run_preview()
         self.assertEqual(result.returncode, 0, result.stderr)
         app = next(cmd for cmd in commands if cmd[:3] == ['az', 'containerapp', 'create'])
@@ -126,8 +128,8 @@ elif args[:2] == ['containerapp', 'show']: print('pv-123-pr-7.example.azureconta
         self.assertEqual(app[app.index('--min-replicas') + 1], '0')
         self.assertEqual(app[app.index('--max-replicas') + 1], '1')
         self.assertIn('LITERAL=$(touch compromised) with spaces', app)
-        roles = [cmd[cmd.index('--role') + 1] for cmd in commands if cmd[:4] == ['az', 'role', 'assignment', 'create']]
-        self.assertEqual(roles, ['AcrPull', 'Reader'])
+        self.assertFalse(any(cmd[:2] == ['az', 'role'] for cmd in commands))
+        self.assertIn('/identity/preview', app)
         self.assertIn('url=https://pv-123-pr-7.example.azurecontainerapps.io', output)
         report = next(cmd for cmd in commands if '--method' in cmd)
         self.assertIn('PATCH', report)
@@ -142,9 +144,8 @@ elif args[:2] == ['containerapp', 'show']: print('pv-123-pr-7.example.azureconta
         result, commands, output = self.run_preview(closed=True, existing=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         app = next(i for i, cmd in enumerate(commands) if cmd[:3] == ['az', 'containerapp', 'delete'])
-        roles = [i for i, cmd in enumerate(commands) if cmd[:4] == ['az', 'role', 'assignment', 'delete']]
-        identity = next(i for i, cmd in enumerate(commands) if cmd[:3] == ['az', 'identity', 'delete'])
-        self.assertTrue(app < min(roles) <= max(roles) < identity)
+        self.assertEqual([cmd[:3] for cmd in commands if 'delete' in cmd], [['az', 'containerapp', 'delete']])
+        self.assertFalse(any(cmd[:2] in [['az', 'role'], ['az', 'identity']] for cmd in commands))
         self.assertIn('operation=delete', output)
         result, commands, _ = self.run_preview(closed=True, empty=True, comment=False)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -153,7 +154,7 @@ elif args[:2] == ['containerapp', 'show']: print('pv-123-pr-7.example.azureconta
         self.assertIn('POST', report)
         self.assertIn('repos/example/site/issues/7/comments', report)
 
-    def test_stale_fork_unowned_and_failed_grants_do_not_deploy(self):
+    def test_stale_fork_unowned_and_missing_identity_do_not_deploy(self):
         for options, success in [({'stale': True}, True), ({'repo': 'attacker/fork'}, False),
                                  ({'existing': True, 'unowned': True}, False), ({'fail': True}, False)]:
             result, commands, output = self.run_preview(**options)
@@ -196,3 +197,53 @@ elif args[:2] == ['containerapp', 'show']: print('pv-123-pr-7.example.azureconta
             failed = subprocess.run(['bash', '-c', step['run']], env={**env, 'FAIL': '1'}, cwd=root, capture_output=True)
             self.assertNotEqual(failed.returncode, 0)
             self.assertFalse((root / 'output').exists())
+
+
+class NightlyCleanupTests(unittest.TestCase):
+    def test_only_confirmed_closed_owned_previews_are_deleted(self):
+        spec = importlib.util.spec_from_file_location('cleanup', ROOT / '.github/actions/container-app-preview/preview_cleanup.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        apps = [{'name': 'portfolio'}, *[
+            {'name': f'pv-123-pr-{number}', 'tags': {'previewRepositoryId': '123', 'previewPullRequest': str(number)}}
+            for number in range(1, 6)
+        ], {'name': 'unrelated', 'tags': {'previewRepositoryId': '123', 'previewPullRequest': '2'}}]
+        deleted = []
+
+        def request(url, method='GET', token=None):
+            if method == 'DELETE':
+                deleted.append(url)
+                return None
+            if 'management.azure.com' in url:
+                return {'value': apps}
+            number = int(url.rsplit('/', 1)[-1])
+            if number == 3:
+                raise OSError('GitHub unavailable')
+            return {'number': number, 'state': 'open' if number == 1 else 'closed',
+                    'base': {'repo': {'id': 999 if number == 5 else 123,
+                                     'owner': {'login': 'another-owner' if number == 4 else 'example'}}}}
+
+        credential = Mock()
+        credential.get_token.return_value.token = 'not-a-real-token'
+        with patch.object(module, 'request', side_effect=request):
+            self.assertEqual(module.sweep('subscription', 'hosting', 'example', credential), 1)
+        self.assertEqual(len(deleted), 1)
+        self.assertIn('/containerApps/pv-123-pr-2?', deleted[0])
+        deleted.clear()
+        with patch.object(module, 'request', side_effect=request):
+            self.assertEqual(module.sweep('subscription', 'hosting', 'example', credential, dry_run=True), 1)
+        self.assertEqual(deleted, [])
+
+    def test_arm_failures_and_foreign_pagination_fail_closed(self):
+        spec = importlib.util.spec_from_file_location('cleanup', ROOT / '.github/actions/container-app-preview/preview_cleanup.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        credential = Mock()
+        credential.get_token.return_value.token = 'not-a-real-token'
+        with patch.object(module, 'request', side_effect=OSError('ARM unavailable')):
+            with self.assertRaises(OSError):
+                module.sweep('subscription', 'hosting', 'example', credential)
+        with patch.object(module, 'request', return_value={'value': [], 'nextLink': 'https://untrusted.example/'}) as request:
+            with self.assertRaises(ValueError):
+                module.sweep('subscription', 'hosting', 'example', credential)
+            self.assertEqual(request.call_count, 1)
