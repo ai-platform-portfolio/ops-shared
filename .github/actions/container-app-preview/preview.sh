@@ -33,27 +33,16 @@ report() {
 # Listing distinguishes absence from a failed lookup; authentication/network
 # errors fail the action rather than being mistaken for a missing resource.
 app=$(az containerapp list --resource-group "$RESOURCE_GROUP" --query "[?name=='$preview'] | [0]" --output json)
-identity=$(az identity list --resource-group "$RESOURCE_GROUP" --query "[?name=='$preview'] | [0]" --output json)
 app=${app:-null}
-identity=${identity:-null}
-for resource in "$app" "$identity"; do
-  [[ "$resource" == null ]] && continue
+if [[ "$app" != null ]]; then
   jq -e --arg repo "$GITHUB_REPOSITORY_ID" --arg pr "$number" \
-    '.tags.previewRepositoryId == $repo and .tags.previewPullRequest == $pr' <<< "$resource" > /dev/null \
+    '.tags.previewRepositoryId == $repo and .tags.previewPullRequest == $pr' <<< "$app" > /dev/null \
     || { echo 'Refusing to modify a resource without this preview ownership.' >&2; exit 1; }
-done
+fi
 
 if [[ "$operation" == delete ]]; then
   if [[ "$app" != null ]]; then
     az containerapp delete --name "$preview" --resource-group "$RESOURCE_GROUP" --yes --output none
-  fi
-  if [[ "$identity" != null ]]; then
-    principal=$(jq -r .principalId <<< "$identity")
-    assignments=$(az role assignment list --assignee-object-id "$principal" --all --query '[].id' --output tsv)
-    if [[ -n "$assignments" ]]; then
-      printf '%s\n' "$assignments" | xargs az role assignment delete --output none --ids
-    fi
-    az identity delete --name "$preview" --resource-group "$RESOURCE_GROUP"
   fi
   echo 'operation=delete' >> "$GITHUB_OUTPUT"
   report 'Preview removed.'
@@ -67,21 +56,8 @@ registry=$(az acr show --name "$REGISTRY" --query '{id:id,server:loginServer}' -
 server=$(jq -r .server <<< "$registry")
 [[ "$IMAGE" == "$server/"* ]] || { echo 'Image must belong to the selected registry.' >&2; exit 1; }
 
-if [[ "$identity" == null ]]; then
-  location=$(az containerapp env show --name "$ENVIRONMENT" --resource-group "$RESOURCE_GROUP" --query location --output tsv)
-  identity=$(az identity create --name "$preview" --resource-group "$RESOURCE_GROUP" --location "$location" \
-    --tags "previewRepositoryId=$GITHUB_REPOSITORY_ID" "previewPullRequest=$number" --output json)
-fi
-principal=$(jq -r .principalId <<< "$identity")
+identity=$(az identity show --name "$MANAGED_IDENTITY" --resource-group "$RESOURCE_GROUP" --output json)
 identity_id=$(jq -r .id <<< "$identity")
-
-grant() {
-  # Azure CLI handles an already-existing assignment natively.
-  az role assignment create --assignee-object-id "$principal" --assignee-principal-type ServicePrincipal \
-    --scope "$1" --role "$2" --output none
-}
-grant "$(jq -r .id <<< "$registry")" AcrPull
-if [[ -n "$READER_SCOPE" ]]; then grant "$READER_SCOPE" Reader; fi
 
 env_vars=("AZURE_CLIENT_ID=$(jq -r .clientId <<< "$identity")")
 while IFS= read -r entry; do
@@ -95,8 +71,10 @@ if [[ "$app" == null ]]; then
     --cpu 0.25 --memory 0.5Gi --min-replicas 0 --max-replicas 1 --env-vars "${env_vars[@]}" \
     --tags "previewRepositoryId=$GITHUB_REPOSITORY_ID" "previewPullRequest=$number" --output none
 else
+  az containerapp identity assign --name "$preview" --resource-group "$RESOURCE_GROUP" --user-assigned "$identity_id" --output none
+  az containerapp registry set --name "$preview" --resource-group "$RESOURCE_GROUP" --server "$server" --identity "$identity_id" --output none
   az containerapp update --name "$preview" --resource-group "$RESOURCE_GROUP" \
-    --image "$IMAGE" --set-env-vars "${env_vars[@]}" --output none
+    --image "$IMAGE" --replace-env-vars "${env_vars[@]}" --output none
 fi
 
 fqdn=$(az containerapp show --name "$preview" --resource-group "$RESOURCE_GROUP" --query properties.configuration.ingress.fqdn --output tsv)

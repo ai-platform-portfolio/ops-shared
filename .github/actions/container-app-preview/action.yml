@@ -4,7 +4,7 @@ description: Create/update or remove a same-repository PR app using native Azure
 inputs:
   resource-group:
     required: true
-    description: Existing resource group for preview apps and identities.
+    description: Existing resource group for previews and their permanent identity.
 
   environment:
     required: true
@@ -22,9 +22,9 @@ inputs:
     default: '{}'
     description: JSON map of non-secret runtime environment variables.
 
-  reader-scope:
-    default: ''
-    description: Optional Azure scope for read-only runtime metadata access.
+  identity:
+    required: true
+    description: Existing permanent managed identity in the resource group; its grants are unchanged.
 
   target-port:
     default: '8080'
@@ -52,7 +52,7 @@ runs:
         REGISTRY: ${{ inputs.registry }}
         IMAGE: ${{ inputs.image }}
         ENV_VARS: ${{ inputs.env-vars }}
-        READER_SCOPE: ${{ inputs.reader-scope }}
+        MANAGED_IDENTITY: ${{ inputs.identity }}
         TARGET_PORT: ${{ inputs.target-port }}
         HEALTH_PATH: ${{ inputs.health-path }}
       run: bash "$GITHUB_ACTION_PATH/preview.sh"
