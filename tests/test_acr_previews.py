@@ -106,7 +106,8 @@ elif args[:2] == ['containerapp', 'show']: print('pv-123-pr-7.example.azureconta
             az = root / 'az'
             az.write_text(f'#!{sys.executable}\nimport json,os,sys\nfrom pathlib import Path\n'
                           "if sys.argv[1:3] == ['acr', 'run']:\n"
-                          " Path(os.environ['TASK']).write_text(sys.stdin.read()); sys.exit(int(os.environ.get('FAIL', '0')))\n"
+                          " task = Path(sys.argv[-1]) / sys.argv[sys.argv.index('--file') + 1]\n"
+                          " Path(os.environ['TASK']).write_text(task.read_text()); sys.exit(int(os.environ.get('FAIL', '0')))\n"
                           "print('sha256:' + 'a' * 64)\n")
             az.chmod(0o755)
             env = {**os.environ, 'PATH': f'{root}:{os.environ["PATH"]}', 'CONTEXT': directory, 'DOCKERFILE': '',
@@ -118,6 +119,7 @@ elif args[:2] == ['containerapp', 'show']: print('pv-123-pr-7.example.azureconta
             task = json.loads((root / 'task.json').read_text())
             self.assertIn('org.opencontainers.image.revision=' + 'c' * 40, task['steps'][0]['build'])
             self.assertEqual(task['steps'][1]['push'], [env['IMAGE']])
+            self.assertEqual(list(root.glob('.acr-task-*.yaml')), [])
             self.assertIn('digest=sha256:' + 'a' * 64, (root / 'output').read_text())
             (root / 'output').unlink()
             failed = subprocess.run(['bash', '-c', step['run']], env={**env, 'FAIL': '1'}, capture_output=True)
