@@ -219,7 +219,7 @@ jobs:
           printf '\nLABEL org.opencontainers.image.source="%s" org.opencontainers.image.revision="%s"\n' \
             "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" "$SOURCE_SHA" >> "$buildfile"
           az acr build --registry localacrk8s --image "${IMAGE#localacrk8s.azurecr.io/}" \
-            --file "${buildfile##*/}" "$CONTEXT"
+            --file "$buildfile" "$CONTEXT"
 
           digest=$(az acr repository show --name localacrk8s \
             --image "${IMAGE#localacrk8s.azurecr.io/}" --query digest --output tsv)
