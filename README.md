@@ -201,13 +201,12 @@ production identity also gives preview code that identity's permissions; a share
 Container Apps environment does not provide a production/test security boundary.
 Close automation starts after its caller merges.
 
-`.github/actions/container-app-preview-job` configures an Azure scheduled job in
-that environment, reusing the permanent identity and an existing scanned image.
-The image must contain `/app/preview_cleanup.py` from the preview action directory;
-consumers can add its immutable source with a verified checksum. The default
-02:00 UTC execution uses 0.25vCPU/0.5GiB, a five-minute timeout and one retry.
-No job replica runs between executions. Configure it after successful main delivery
-so its image follows the deployed application. Azure owns the nightly schedule.
+For an Azure-hosted nightly fallback, include `preview_cleanup.py` from the
+preview action directory in the existing application image using immutable source
+and a verified checksum. Configure the scheduled job alongside that application's
+infrastructure, reusing its image, environment and permanent identity. The shared
+Terraform Container App module supports these related scheduled commands; CI does
+not provision a separate job through Azure CLI.
 
 The cleanup script lists apps in the supplied group and checks repository/PR tags,
 exact generated name, repository ID and GitHub owner. Only a verified closed PR
