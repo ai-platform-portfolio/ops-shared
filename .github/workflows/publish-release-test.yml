@@ -11,6 +11,7 @@ on:
       - .github/workflows/python-package.yml
       - .github/workflows/docker.yml
       - .github/workflows/terraform.yml
+      - .github/workflows/terraform-preview.yml
       - .github/workflows/validate.yml
       - .github/workflows/publish-release-test.yml
 
@@ -25,6 +26,7 @@ on:
       - .github/workflows/python-package.yml
       - .github/workflows/docker.yml
       - .github/workflows/terraform.yml
+      - .github/workflows/terraform-preview.yml
       - .github/workflows/validate.yml
       - .github/workflows/publish-release-test.yml
 

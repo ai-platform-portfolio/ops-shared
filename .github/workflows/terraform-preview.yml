@@ -1,0 +1,277 @@
+name: OpenTofu PR preview
+
+on:
+  workflow_call:
+    inputs:
+      root:
+        description: Trusted base-branch root consuming reusable infrastructure modules.
+        required: true
+        type: string
+
+      image:
+        description: Scanned registry/repository@sha256 image; omitted on PR close.
+        type: string
+        default: ''
+
+      variables:
+        description: Additional non-secret root inputs; preview_name and image are reserved.
+        type: string
+        default: '{}'
+
+      tofu-version:
+        type: string
+        default: '1.13.9'
+
+      environment:
+        description: Existing GitHub environment with Azure OIDC federation.
+        type: string
+        default: central-apply
+
+      health-path:
+        type: string
+        default: /healthz
+
+    secrets:
+      AZURE_CLIENT_ID:
+        required: true
+
+      AZURE_TENANT_ID:
+        required: true
+
+      AZURE_SUBSCRIPTION_ID:
+        required: true
+
+      TF_BACKEND_RESOURCE_GROUP:
+        required: true
+
+      TF_BACKEND_RESOURCE_NAME:
+        required: true
+
+      TF_BACKEND_CONTAINER:
+        required: true
+
+permissions:
+  contents: read
+
+# Deploy and close-event callers use the same lock. Never cancel an Azure/state
+# operation. Every queued run re-reads PR state, so even an old build cleans up
+# a now-closed PR rather than recreating it.
+concurrency:
+  group: preview-${{ github.repository_id }}-${{ github.event.pull_request.number }}
+  queue: max
+  cancel-in-progress: false
+
+jobs:
+  preview:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      (github.event_name == 'pull_request' ||
+       (github.event_name == 'pull_request_target' && github.event.action == 'closed'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: ${{ inputs.environment }}
+
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
+      deployments: write
+
+    env:
+      TF_IN_AUTOMATION: 'true'
+      ARM_USE_OIDC: 'true'
+      ARM_USE_AZUREAD: 'true'
+      ARM_USE_CLI: 'false'
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      TF_ROOT: ${{ inputs.root }}
+
+    steps:
+      - name: Resolve current PR intent
+        id: intent
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+        env:
+          IMAGE: ${{ inputs.image }}
+        with:
+          script: |
+            const {data: pr} = await github.rest.pulls.get({...context.repo, pull_number: context.issue.number});
+            if (pr.head.repo?.full_name !== process.env.GITHUB_REPOSITORY) {
+              throw new Error('Only same-repository previews are supported.');
+            }
+            const hash = require('crypto').createHash('sha256').update(process.env.GITHUB_REPOSITORY_ID).digest('hex').slice(0, 12);
+            const name = `pv-${hash}-pr-${pr.number}`;
+            core.setOutput('name', name);
+            core.setOutput('state', `previews/${name}.tfstate`);
+            core.setOutput('ref', context.payload.pull_request.base.sha);
+
+            let operation = 'skip';
+            if (pr.state === 'closed') operation = 'destroy';
+            else if (context.eventName === 'pull_request' && pr.head.sha === context.payload.pull_request.head.sha) operation = 'apply';
+
+            if (operation === 'apply' && !/^[a-z0-9.-]+\/[a-z0-9/._-]+@sha256:[a-f0-9]{64}$/.test(process.env.IMAGE)) {
+              throw new Error('A scanned digest-pinned image is required.');
+            }
+            if (operation !== 'skip') {
+              // Infrastructure always comes from the trusted base, never the PR
+              // checkout. The bootstrap PR cannot deploy until its root merges.
+              try {
+                await github.rest.repos.getContent({...context.repo, path: process.env.TF_ROOT, ref: context.payload.pull_request.base.sha});
+              } catch (error) {
+                if (error.status !== 404) throw error;
+                core.notice('Preview root is absent on the trusted base; merge onboarding before preview acceptance.');
+                operation = 'skip';
+              }
+            }
+            core.setOutput('operation', operation);
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        if: steps.intent.outputs.operation != 'skip'
+        with:
+          ref: ${{ steps.intent.outputs.ref }}
+          persist-credentials: false
+
+      - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4
+        if: steps.intent.outputs.operation != 'skip'
+        with:
+          tofu_version: ${{ inputs.tofu-version }}
+          tofu_wrapper: false
+
+      - name: Init and validate
+        if: steps.intent.outputs.operation != 'skip'
+        env:
+          STATE_GROUP: ${{ secrets.TF_BACKEND_RESOURCE_GROUP }}
+          STATE_ACCOUNT: ${{ secrets.TF_BACKEND_RESOURCE_NAME }}
+          STATE_CONTAINER: ${{ secrets.TF_BACKEND_CONTAINER }}
+          STATE_KEY: ${{ steps.intent.outputs.state }}
+        run: |
+          tofu -chdir="$TF_ROOT" init -input=false -lockfile=readonly -no-color \
+            -backend-config="resource_group_name=$STATE_GROUP" \
+            -backend-config="storage_account_name=$STATE_ACCOUNT" \
+            -backend-config="container_name=$STATE_CONTAINER" \
+            -backend-config="key=$STATE_KEY"
+
+          tofu -chdir="$TF_ROOT" fmt -check -recursive
+          tofu -chdir="$TF_ROOT" validate -no-color
+
+      - name: Recheck PR before mutation
+        id: current
+        if: steps.intent.outputs.operation != 'skip'
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+        with:
+          script: |
+            const {data: pr} = await github.rest.pulls.get({...context.repo, pull_number: context.issue.number});
+            let operation = 'skip';
+            if (pr.state === 'closed') operation = 'destroy';
+            else if (context.eventName === 'pull_request' && pr.head.sha === context.payload.pull_request.head.sha) operation = 'apply';
+            core.setOutput('operation', operation);
+
+      - name: Create deployment record
+        id: deployment
+        if: steps.current.outputs.operation == 'apply'
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+        env:
+          PREVIEW_NAME: ${{ steps.intent.outputs.name }}
+        with:
+          script: |
+            const {data} = await github.rest.repos.createDeployment({
+              ...context.repo, ref: context.payload.pull_request.head.sha,
+              environment: process.env.PREVIEW_NAME, auto_merge: false,
+              required_contexts: [], transient_environment: true, production_environment: false
+            });
+            core.setOutput('id', data.id);
+            await github.rest.repos.createDeploymentStatus({...context.repo, deployment_id: data.id, state: 'in_progress'});
+
+      - name: Apply or destroy preview
+        id: infrastructure
+        if: steps.current.outputs.operation == 'apply' || steps.current.outputs.operation == 'destroy'
+        shell: bash
+        env:
+          OPERATION: ${{ steps.current.outputs.operation }}
+          PREVIEW_NAME: ${{ steps.intent.outputs.name }}
+          IMAGE: ${{ inputs.image }}
+          VARIABLES: ${{ inputs.variables }}
+        run: |
+          set -euo pipefail
+
+          # Destroy still needs valid root inputs, but does not rebuild an image.
+          image=${IMAGE:-example.invalid/unused@sha256:0000000000000000000000000000000000000000000000000000000000000000}
+          jq -e 'type == "object" and (has("preview_name") | not) and (has("image") | not)' <<< "$VARIABLES" > /dev/null
+          jq --arg name "$PREVIEW_NAME" --arg image "$image" \
+            '. + {preview_name: $name, image: $image}' <<< "$VARIABLES" > "$RUNNER_TEMP/preview.tfvars.json"
+
+          args=()
+          if [[ "$OPERATION" == destroy ]]; then args+=(-destroy); fi
+
+          # Saved plans stay on this runner and are never uploaded or printed.
+          if ! tofu -chdir="$TF_ROOT" plan -input=false -lock-timeout=5m -no-color \
+            "${args[@]}" -var-file="$RUNNER_TEMP/preview.tfvars.json" \
+            -out="$RUNNER_TEMP/preview.tfplan" > "$RUNNER_TEMP/preview-plan.log" 2>&1; then
+            sed -E 's/[[:xdigit:]]{8}(-[[:xdigit:]]{4}){3}-[[:xdigit:]]{12}/[redacted-id]/g' "$RUNNER_TEMP/preview-plan.log"
+            exit 1
+          fi
+
+          tofu -chdir="$TF_ROOT" apply -input=false -lock-timeout=5m -no-color \
+            "$RUNNER_TEMP/preview.tfplan" 2>&1 \
+            | sed -E 's/[[:xdigit:]]{8}(-[[:xdigit:]]{4}){3}-[[:xdigit:]]{12}/[redacted-id]/g'
+
+          if [[ "$OPERATION" == apply ]]; then
+            url=$(tofu -chdir="$TF_ROOT" output -raw url)
+            [[ "$url" =~ ^https://[a-z0-9.-]+$ ]] || { echo 'Invalid preview URL.' >&2; exit 1; }
+            echo "url=$url" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check preview HTTP readiness
+        if: steps.current.outputs.operation == 'apply'
+        env:
+          PREVIEW_URL: ${{ steps.infrastructure.outputs.url }}
+          HEALTH_PATH: ${{ inputs.health-path }}
+        run: |
+          curl --fail --silent --show-error --retry 12 --retry-all-errors \
+            --retry-delay 5 --connect-timeout 10 --max-time 20 \
+            "${PREVIEW_URL}${HEALTH_PATH}" > /dev/null
+
+      - name: Report preview outcome
+        if: always() && steps.current.outputs.operation != '' && steps.current.outputs.operation != 'skip'
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+        env:
+          RESULT: ${{ job.status }}
+          OPERATION: ${{ steps.current.outputs.operation }}
+          PREVIEW_NAME: ${{ steps.intent.outputs.name }}
+          PREVIEW_URL: ${{ steps.infrastructure.outputs.url }}
+          DEPLOYMENT_ID: ${{ steps.deployment.outputs.id }}
+        with:
+          script: |
+            const success = process.env.RESULT === 'success';
+            const {data: pr} = await github.rest.pulls.get({...context.repo, pull_number: context.issue.number});
+            const current = pr.state === 'open' && pr.head.sha === context.payload.pull_request.head.sha;
+            const removed = process.env.OPERATION === 'destroy' && success;
+            const ready = process.env.OPERATION === 'apply' && success && current;
+            const environment = process.env.PREVIEW_NAME;
+            if (process.env.DEPLOYMENT_ID) {
+              await github.rest.repos.createDeploymentStatus({
+                ...context.repo, deployment_id: Number(process.env.DEPLOYMENT_ID),
+                state: ready ? 'success' : success ? 'inactive' : 'failure',
+                ...(ready ? {environment_url: process.env.PREVIEW_URL} : {})
+              });
+            }
+            if (removed) {
+              const records = await github.paginate(github.rest.repos.listDeployments, {...context.repo, environment});
+              for (const record of records) {
+                await github.rest.repos.createDeploymentStatus({...context.repo, deployment_id: record.id, state: 'inactive'});
+              }
+            }
+            // Do not advertise a successful but superseded build while the next
+            // queued update/close event reconciles it.
+            if (!removed && !ready && success) return;
+            const marker = `<!-- preview:${environment} -->`;
+            const message = removed ? 'Preview removed.' : ready
+              ? `[Open preview](${process.env.PREVIEW_URL}) — source \`${pr.head.sha}\`.`
+              : 'Preview operation failed. See the workflow run; cleanup can be retried by rerunning the close workflow.';
+            const body = `${marker}\n${message}`;
+            await core.summary.addRaw(body).write();
+            const params = {...context.repo, issue_number: pr.number};
+            const comments = await github.paginate(github.rest.issues.listComments, params);
+            const existing = comments.find(c => c.user.login === 'github-actions[bot]' && c.body?.includes(marker));
+            if (existing) await github.rest.issues.updateComment({...context.repo, comment_id: existing.id, body});
+            else await github.rest.issues.createComment({...params, body});

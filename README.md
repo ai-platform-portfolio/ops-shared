@@ -7,6 +7,7 @@ Reusable GitHub Actions workflow templates. Callers choose their events and inpu
 | `.github/workflows/linear-issue-check.yml` | Validate PR branch issue IDs through Linear read-only OAuth |
 | `.github/workflows/validate.yml` | Terraform formatting and validation, with optional Helm rendering |
 | `.github/workflows/terraform.yml` | Azure OIDC OpenTofu plan and saved-plan apply |
+| `.github/workflows/terraform-preview.yml` | Isolated per-PR OpenTofu apply/close cleanup and HTTPS preview reporting |
 | `.github/workflows/docker.yml` | Build or publish to the platform ACR with image-scoped BuildKit caching |
 | `.github/workflows/python-package.yml` | Build one Python wheel and optionally publish it to a GitHub release |
 
@@ -111,6 +112,58 @@ for the **actual** GitHub subject; do not assume an environment name grants acce
 Reference: [Azure-only adaptation of the supplied workflow](https://github.com/library-bin-placeholder/ops-shared/blob/main/.github/workflows/terraform.yml).
 
 ## Configuration validation
+
+### PR preview delivery
+
+`terraform-preview.yml` is a separate opt-in capability; `terraform.yml` keeps its
+main-only apply safeguard. A caller supplies one `root`, a scanned digest-pinned
+`image`, and the existing Azure OIDC/backend secrets. The root accepts
+`preview_name` and `image` and exports an HTTPS `url`; additional non-secret inputs
+can be supplied through `variables` or the root's native tfvars. The root should
+consume reusable infrastructure modules and own only disposable preview resources.
+Do not include the shared environment, registry, backend or production app in it.
+
+Call after build/test/scan success on same-repository `pull_request` events. Call
+the same workflow without `image` from a separate, unfiltered
+`pull_request_target: {types: [closed]}` caller for cleanup. Grant contents read,
+id-token write, pull-requests write and deployments write. The close caller must
+not check out PR code. Forks are rejected. The configured GitHub `environment`
+(default `central-apply`) must already have OIDC trust and appropriate resource,
+backend and role-assignment permissions; the workflow creates no CI credentials.
+
+The root is checked out only from the event's base SHA. Initial onboarding skips
+deployment if that root is absent on the trusted base. Root changes take effect
+after merging, not through arbitrary PR infrastructure execution. Deploying the PR
+image still executes that application's code: provision dedicated least-privilege
+runtime identities rather than reusing production identities. Same-repository
+workflow authors remain trusted; this workflow does not sandbox malicious caller
+workflow edits or make a broadly privileged CI principal narrowly scoped.
+
+Names and backend keys derive from repository ID plus PR number. One preview root
+per PR is supported per caller repository. All deploy/close invocations share a
+non-cancelling concurrency group. Current PR state and head are checked twice.
+Native `queue: max` retains up to 100 pending runs rather than letting an older
+build evict a pending newer deployment or close event. Queue overflow or cancelled
+runs require rerunning the appropriate workflow. See
+[GitHub concurrency](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency).
+Old builds skip a newer head or destroy a now-closed PR. A PR change during an
+Azure operation is reconciled by its queued event; stale successful builds are not
+advertised. The apply uses a runner-local saved plan; no binary plan is uploaded.
+The root owns dependency ordering, while the workflow uses native destroy for
+close/merge, even when the last build failed. Rerun a failed close run to retry.
+Keep the root available on the base branch while previews still need cleanup.
+
+`health-path` defaults `/healthz`; readiness failure marks the transient deployment
+failed. Success updates one bot comment and publishes its URL. Successful cleanup
+marks preview deployment records inactive. Public access, identity grants, data
+isolation and container image retention remain explicit root/caller policies.
+Empty state blobs remain in the persistent backend. No ACR Tasks, PAT, registry
+purge, shared-resource deletion or production traffic changes are introduced.
+
+The `.github` portfolio caller is the acceptance consumer. Local executable tests
+cover stale/closed/reopened PRs, repository/PR naming, trusted-base selection,
+saved destroy plans, literal variables and deployment reporting. Hosted creation,
+update, concurrent PR isolation and close cleanup require consumer acceptance.
 
 For `validate.yml`, set `tofu-version` to run formatting, backend-disabled init and
 validation entirely with OpenTofu. Existing callers that omit it retain their
