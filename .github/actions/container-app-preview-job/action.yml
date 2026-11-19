@@ -1,0 +1,68 @@
+name: Configure nightly preview cleanup
+description: Configure a scheduled Azure job using an existing image, environment and identity.
+
+inputs:
+  name:
+    required: true
+    description: Stable cleanup job name.
+
+  resource-group:
+    required: true
+    description: Existing hosting resource group.
+
+  environment:
+    required: true
+    description: Existing Container Apps environment.
+
+  identity:
+    required: true
+    description: Existing permanent managed identity in the hosting resource group.
+
+  registry:
+    required: true
+    description: Existing ACR name.
+
+  image:
+    required: true
+    description: Scanned portfolio image by digest, containing preview_cleanup.py.
+
+  schedule:
+    default: '0 2 * * *'
+    description: Nightly cron schedule in UTC.
+
+runs:
+  using: composite
+  steps:
+    - name: Configure Azure scheduled job
+      shell: bash
+      env:
+        JOB: ${{ inputs.name }}
+        RESOURCE_GROUP: ${{ inputs.resource-group }}
+        ENVIRONMENT: ${{ inputs.environment }}
+        MANAGED_IDENTITY: ${{ inputs.identity }}
+        REGISTRY: ${{ inputs.registry }}
+        IMAGE: ${{ inputs.image }}
+        SCHEDULE: ${{ inputs.schedule }}
+        GITHUB_OWNER: ${{ github.repository_owner }}
+      run: |
+        set -euo pipefail
+
+        [[ "$IMAGE" =~ ^[a-z0-9.-]+/[a-z0-9/._-]+@sha256:[a-f0-9]{64}$ ]]
+        existing=$(az containerapp job list --resource-group "$RESOURCE_GROUP" --query "[?name=='$JOB'] | [0]" --output json)
+        if [[ -n "$existing" && "$existing" != null ]]; then
+          jq -e --arg owner "$GITHUB_OWNER" '.tags.previewCleanupOwner == $owner' <<< "$existing" > /dev/null
+        fi
+        identity=$(az identity show --name "$MANAGED_IDENTITY" --resource-group "$RESOURCE_GROUP" --output json)
+        identity_id=$(jq -r .id <<< "$identity")
+        client_id=$(jq -r .clientId <<< "$identity")
+        subscription=$(az account show --query id --output tsv)
+
+        az containerapp job create --name "$JOB" --resource-group "$RESOURCE_GROUP" --environment "$ENVIRONMENT" \
+          --trigger-type Schedule --cron-expression "$SCHEDULE" --replica-timeout 300 --replica-retry-limit 1 \
+          --parallelism 1 --replica-completion-count 1 --cpu 0.25 --memory 0.5Gi \
+          --image "$IMAGE" --mi-user-assigned "$identity_id" \
+          --registry-server "$REGISTRY.azurecr.io" --registry-identity "$identity_id" \
+          --command python --args /app/preview_cleanup.py \
+          --env-vars "AZURE_CLIENT_ID=$client_id" "AZURE_SUBSCRIPTION_ID=$subscription" \
+            "PREVIEW_RESOURCE_GROUP=$RESOURCE_GROUP" "PREVIEW_GITHUB_OWNER=$GITHUB_OWNER" \
+          --tags "previewCleanupOwner=$GITHUB_OWNER" --output none

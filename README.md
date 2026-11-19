@@ -183,24 +183,38 @@ state is needed. The Azure OIDC identity needs permission to schedule task runs.
 When updating the build action, update its immutable pin in `docker.yml` too.
 
 `.github/actions/container-app-preview` uses an existing Azure CLI login and the
-PR's GitHub token. Supply `resource-group`, `environment`, `registry`, a scanned
-digest-pinned `image`, and optional JSON `env-vars` / `reader-scope`. Names derive
-from repository ID plus PR number. The action creates a dedicated identity with
-AcrPull and, only if requested, Reader at that scope; it never uses a production
-runtime identity. Defaults are public generated HTTPS, port8080, 0.25vCPU/0.5GiB,
-replicas0–1 and `/healthz`. It updates one PR comment with the ready URL.
+PR's GitHub token. Supply `resource-group`, `environment`, `registry`, an existing
+permanent `identity`, a scanned digest-pinned `image`, and optional JSON `env-vars`.
+The identity must already have ACR pull and application permissions. The action
+never creates identities or changes role assignments. Names derive from repository
+ID plus PR number. Defaults are public generated HTTPS, port8080,
+0.25vCPU/0.5GiB, replicas0–1 and `/healthz`. One PR comment tracks the ready URL.
 
 Call after tests/build/scan for same-repository PRs, and for unfiltered close-only
 `pull_request_target` events with no PR checkout. One caller job can handle both:
 skip builds on close and use `always()` so skipped build dependencies do not block
-cleanup. Serialize that job with a non-cancelling concurrency group and `queue: max`.
-The action checks live PR state/head and resource ownership tags;
-closed PRs delete the app before grants/identity. Rerun failures to retry. Keep the
-registry/environment outside this lifecycle; image retention is independent.
-Same-repository workflow authors and the deployer remain trusted. Shared Container
-Apps environments do not provide a production/test environment boundary. Close
-automation starts after its caller merges; onboarding acceptance resources need
-explicit cleanup if that onboarding PR is abandoned before merge.
+cleanup. Serialize it with a non-cancelling concurrency group and `queue: max`.
+The action checks live PR state/head and ownership tags; closed PRs delete only
+the app. Registry, environment, permanent identity and grants remain unchanged.
+Same-repository workflow authors and the deployer remain trusted. Reusing a
+production identity also gives preview code that identity's permissions; a shared
+Container Apps environment does not provide a production/test security boundary.
+Close automation starts after its caller merges.
+
+`.github/actions/container-app-preview-job` configures an Azure scheduled job in
+that environment, reusing the permanent identity and an existing scanned image.
+The image must contain `/app/preview_cleanup.py` from the preview action directory;
+consumers can add its immutable source with a verified checksum. The default
+02:00 UTC execution uses 0.25vCPU/0.5GiB, a five-minute timeout and one retry.
+No job replica runs between executions. Configure it after successful main delivery
+so its image follows the deployed application. Azure owns the nightly schedule.
+
+The cleanup script lists apps in the supplied group and checks repository/PR tags,
+exact generated name, repository ID and GitHub owner. Only a verified closed PR
+permits deletion. Open PRs and failed/unknown lookups remain. Public repositories
+need no GitHub credential; private repositories are skipped. Set
+`PREVIEW_CLEANUP_DRY_RUN=true` to inspect selection without deletion. This is a
+fallback for missed close events; image retention remains independent.
 
 Use `.github/actions/acr-helm-login` to authenticate with GitHub OIDC and log an
 installed Helm CLI in to ACR. The caller grants `id-token: write` and supplies its
