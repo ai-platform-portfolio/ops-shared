@@ -1,0 +1,77 @@
+name: Container App PR preview
+description: Create/update or remove a same-repository PR app using native Azure CLI.
+
+inputs:
+  resource-group:
+    required: true
+    description: Existing resource group for preview apps and identities.
+
+  environment:
+    required: true
+    description: Existing Container Apps environment in that resource group.
+
+  registry:
+    required: true
+    description: Existing ACR name.
+
+  image:
+    default: ''
+    description: Scanned digest-pinned image; omitted on close.
+
+  env-vars:
+    default: '{}'
+    description: JSON map of non-secret runtime environment variables.
+
+  reader-scope:
+    default: ''
+    description: Optional Azure scope for read-only runtime metadata access.
+
+  target-port:
+    default: '8080'
+    description: Container HTTP port.
+
+  health-path:
+    default: /healthz
+    description: HTTP readiness path.
+
+outputs:
+  url:
+    description: Ready preview HTTPS URL; empty on cleanup or a stale run.
+    value: ${{ steps.preview.outputs.url }}
+
+runs:
+  using: composite
+  steps:
+    - name: Reconcile PR preview
+      id: preview
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        RESOURCE_GROUP: ${{ inputs.resource-group }}
+        ENVIRONMENT: ${{ inputs.environment }}
+        REGISTRY: ${{ inputs.registry }}
+        IMAGE: ${{ inputs.image }}
+        ENV_VARS: ${{ inputs.env-vars }}
+        READER_SCOPE: ${{ inputs.reader-scope }}
+        TARGET_PORT: ${{ inputs.target-port }}
+        HEALTH_PATH: ${{ inputs.health-path }}
+      run: bash "$GITHUB_ACTION_PATH/preview.sh"
+
+    - name: Update preview link
+      if: steps.preview.outputs.operation != ''
+      uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+      env:
+        PREVIEW_URL: ${{ steps.preview.outputs.url }}
+        OPERATION: ${{ steps.preview.outputs.operation }}
+      with:
+        script: |
+          const {data: pr} = await github.rest.pulls.get({...context.repo, pull_number: context.issue.number});
+          if (process.env.OPERATION === 'deploy' && (pr.state !== 'open' || pr.head.sha !== context.payload.pull_request.head.sha)) return;
+          const marker = '<!-- container-app-preview -->';
+          const body = `${marker}\n${process.env.OPERATION === 'delete' ? 'Preview removed.' : `[Open preview](${process.env.PREVIEW_URL}) — source \`${pr.head.sha}\`.`}`;
+          await core.summary.addRaw(body).write();
+          const params = {...context.repo, issue_number: pr.number};
+          const comments = await github.paginate(github.rest.issues.listComments, params);
+          const existing = comments.find(c => c.user.login === 'github-actions[bot]' && c.body?.includes(marker));
+          if (existing) await github.rest.issues.updateComment({...context.repo, comment_id: existing.id, body});
+          else await github.rest.issues.createComment({...params, body});

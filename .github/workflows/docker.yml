@@ -38,6 +38,11 @@ on:
         type: boolean
         default: false
 
+      build-engine:
+        description: docker (default) or acr for Azure-hosted published builds; build-only runs use Docker.
+        type: string
+        default: docker
+
       artifact-name:
         description: Optional unique artifact name for the published image/digest/revision record.
         type: string
@@ -83,7 +88,7 @@ jobs:
 
     outputs:
       image: ${{ steps.image-tag.outputs.image }}
-      digest: ${{ env.PUBLISH == 'true' && steps.build.outputs.digest || '' }}
+      digest: ${{ env.PUBLISH == 'true' && (steps.remote.outputs.digest || steps.build.outputs.digest) || '' }}
       revision: ${{ steps.source.outputs.revision }}
 
     env:
@@ -124,7 +129,13 @@ jobs:
 
           echo "revision=$revision" >> "$GITHUB_OUTPUT"
 
+      - name: Validate build engine
+        env:
+          BUILD_ENGINE: ${{ inputs.build-engine }}
+        run: '[[ "$BUILD_ENGINE" == docker || "$BUILD_ENGINE" == acr ]]'
+
       - uses: docker/setup-buildx-action@v4
+        if: inputs.build-engine != 'acr' || env.PUBLISH != 'true'
 
       - name: Generate image tag
         id: image-tag
@@ -172,6 +183,7 @@ jobs:
 
       - name: Build and optionally push
         id: build
+        if: inputs.build-engine != 'acr' || env.PUBLISH != 'true'
         uses: docker/build-push-action@v7
         with:
           context: ${{ inputs.context }}
@@ -185,11 +197,39 @@ jobs:
           cache-from: type=gha,scope=${{ inputs.image }}
           cache-to: type=gha,scope=${{ inputs.image }},mode=max
 
+      - name: Build remotely with ACR Tasks
+        id: remote
+        if: inputs.build-engine == 'acr' && env.PUBLISH == 'true'
+        shell: bash
+        env:
+          CONTEXT: ${{ inputs.context }}
+          DOCKERFILE: ${{ inputs.file }}
+          IMAGE: ${{ steps.image-tag.outputs.image }}
+        run: |
+          set -euo pipefail
+
+          dockerfile=$(python3 -c 'import os,sys; print(os.path.relpath(*sys.argv[1:]))' "${DOCKERFILE:-$CONTEXT/Dockerfile}" "$CONTEXT")
+          [[ "$dockerfile" != ../* ]] || { echo 'ACR builds require a Dockerfile inside the build context.' >&2; exit 1; }
+
+          # A quick multi-step task preserves the same OCI source/revision labels
+          # as BuildKit. Source is uploaded; ACR needs no GitHub token or webhook.
+          printf -v build '%q ' --file "$dockerfile" --tag "$IMAGE" \
+            --label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            --label "org.opencontainers.image.revision=$SOURCE_SHA" .
+          jq -n --arg build "$build" --arg image "$IMAGE" \
+            '{version:"v1.1.0",steps:[{build:$build},{push:[$image]}]}' \
+            | az acr run --registry localacrk8s --file - "$CONTEXT"
+
+          digest=$(az acr repository show --name localacrk8s \
+            --image "${IMAGE#localacrk8s.azurecr.io/}" --query digest --output tsv)
+          [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]] || { echo 'Published digest is missing.' >&2; exit 1; }
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
       - name: Scan image before releasing the build
         if: inputs.scan
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: ${{ env.PUBLISH == 'true' && format('localacrk8s.azurecr.io/{0}@{1}', inputs.image, steps.build.outputs.digest) || steps.image-tag.outputs.image }}
+          image-ref: ${{ env.PUBLISH == 'true' && format('localacrk8s.azurecr.io/{0}@{1}', inputs.image, steps.remote.outputs.digest || steps.build.outputs.digest) || steps.image-tag.outputs.image }}
           version: v0.76.2
           scanners: vuln
           severity: HIGH,CRITICAL
@@ -201,7 +241,7 @@ jobs:
         shell: bash
         env:
           IMAGE: ${{ steps.image-tag.outputs.image }}
-          DIGEST: ${{ steps.build.outputs.digest }}
+          DIGEST: ${{ steps.remote.outputs.digest || steps.build.outputs.digest }}
           REVISION: ${{ steps.source.outputs.revision }}
         run: |
           [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo 'Published digest is missing.' >&2; exit 1; }

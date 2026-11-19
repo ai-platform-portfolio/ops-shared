@@ -169,6 +169,34 @@ HTTPS URL/SHA256 in requirements.txt with hash/binary-only installs.
 
 ## Azure registry building blocks
 
+The existing Docker workflow accepts `build-engine: acr` to offload published
+builds to standard ACR Tasks. It uploads the checked-out context with `az acr run`,
+preserves OCI source/revision labels, and returns the registry digest. The same
+Trivy gate and optional image record apply to either engine. Default builds retain
+BuildKit; forks/build-only runs use local Docker without Azure credentials. ACR
+requires the Dockerfile inside the context and uses its own build cache rather
+than the GitHub BuildKit cache. No PAT, source webhook, dedicated pool or Terraform
+state is needed. The Azure OIDC identity needs permission to schedule task runs.
+
+`.github/actions/container-app-preview` uses an existing Azure CLI login and the
+PR's GitHub token. Supply `resource-group`, `environment`, `registry`, a scanned
+digest-pinned `image`, and optional JSON `env-vars` / `reader-scope`. Names derive
+from repository ID plus PR number. The action creates a dedicated identity with
+AcrPull and, only if requested, Reader at that scope; it never uses a production
+runtime identity. Defaults are public generated HTTPS, port8080, 0.25vCPU/0.5GiB,
+replicas0–1 and `/healthz`. It updates one PR comment with the ready URL.
+
+Call after tests/build/scan for same-repository PRs. Call again without an image
+from an unfiltered, close-only `pull_request_target` workflow with no PR checkout.
+Both caller jobs must use the same non-cancelling concurrency group with
+`queue: max`. The action checks live PR state/head and resource ownership tags;
+closed PRs delete the app before grants/identity. Rerun failures to retry. Keep the
+registry/environment outside this lifecycle; image retention is independent.
+Same-repository workflow authors and the deployer remain trusted. Shared Container
+Apps environments do not provide a production/test environment boundary. Close
+automation starts after its caller merges; onboarding acceptance resources need
+explicit cleanup if that onboarding PR is abandoned before merge.
+
 Use `.github/actions/acr-helm-login` to authenticate with GitHub OIDC and log an
 installed Helm CLI in to ACR. The caller grants `id-token: write` and supplies its
 existing Azure identity IDs, with matching federated trust and registry access:
