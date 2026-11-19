@@ -213,7 +213,7 @@ jobs:
 
           # Native build uploads the selected Dockerfile even when excluded by
           # .dockerignore. Add the same OCI labels without editing caller source.
-          buildfile=$(mktemp "$CONTEXT/.acr-build-XXXXXX.Dockerfile")
+          buildfile=$(mktemp "$RUNNER_TEMP/acr-build-XXXXXX.Dockerfile")
           trap 'rm -f "$buildfile"' EXIT
           cat "$CONTEXT/$dockerfile" > "$buildfile"
           printf '\nLABEL org.opencontainers.image.source="%s" org.opencontainers.image.revision="%s"\n' \

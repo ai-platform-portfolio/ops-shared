@@ -114,6 +114,7 @@ elif args[:2] == ['containerapp', 'show']: print('pv-123-pr-7.example.azureconta
                           "print('sha256:' + 'a' * 64)\n")
             az.chmod(0o755)
             env = {**os.environ, 'PATH': f'{root}:{os.environ["PATH"]}', 'CONTEXT': 'source', 'DOCKERFILE': '',
+                   'RUNNER_TEMP': directory,
                    'IMAGE': 'localacrk8s.azurecr.io/site:preview-7-commit', 'TASK': str(root / 'task.json'),
                    'GITHUB_OUTPUT': str(root / 'output'), 'GITHUB_SERVER_URL': 'https://github.com',
                    'GITHUB_REPOSITORY': 'example/site', 'SOURCE_SHA': 'c' * 40}
@@ -123,7 +124,8 @@ elif args[:2] == ['containerapp', 'show']: print('pv-123-pr-7.example.azureconta
             self.assertTrue(task.startswith('FROM scratch\n'))
             self.assertIn('org.opencontainers.image.revision="' + 'c' * 40 + '"', task)
             self.assertIn('org.opencontainers.image.source="https://github.com/example/site"', task)
-            self.assertEqual(list(source.glob('.acr-build-*.Dockerfile')), [])
+            self.assertEqual(list(root.glob('acr-build-*.Dockerfile')), [])
+            self.assertEqual({item.name for item in source.iterdir()}, {'Dockerfile', '.dockerignore'})
             self.assertEqual((source / 'Dockerfile').read_text(), 'FROM scratch\n')
             self.assertIn('digest=sha256:' + 'a' * 64, (root / 'output').read_text())
             (root / 'output').unlink()
