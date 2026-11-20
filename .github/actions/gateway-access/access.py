@@ -19,6 +19,8 @@ def invoke(*arguments):
                                 '--resource-group', os.environ['RESOURCE_GROUP'],
                                 '--name', os.environ['CLUSTER'], *arguments, '--output', 'json'))
     if result.get('exitCode') != 0:
+        if 'ACCOUNTING_RESTORE_REQUIRED' in (result.get('logs') or '').splitlines():
+            raise RuntimeError('ACCOUNTING_RESTORE_REQUIRED: restore or explicitly reconcile existing accounting; no new allowance was issued')
         raise RuntimeError(f'Gateway command failed; Azure operation: {result.get("id", "unavailable")}')
     return (result['logs'] or '').strip()
 
@@ -87,12 +89,23 @@ def apply():
     (directory() / 'values.json').write_text(json.dumps(values))
     registration = directory() / 'registration.yaml'
     registration.write_text(render(values, registration=True))
+    job = next(r for r in yaml.safe_load_all(render(values)) if r and r['kind'] == 'Job'
+               and not r['metadata'].get('annotations', {}).get('argocd.argoproj.io/hook'))
+    namespace, job_name = job['metadata']['namespace'], job['metadata']['name']
+    if any(not re.fullmatch(r'[a-z0-9]([-a-z0-9]*[a-z0-9])?', value) for value in (namespace, job_name)):
+        raise ValueError('Invalid chart-owned credential Job identity')
     invoke('--file', str(registration), '--command', f'''
 set -eu
 kubectl apply -f registration.yaml
 kubectl wait -n argocd --for=jsonpath='{{.status.sync.comparedTo.sources[0].helm.valuesObject.platform.modelGateway.principalId}}'={principal} applications.argoproj.io/{name} --timeout=240s
-kubectl wait -n argocd --for=jsonpath='{{.status.sync.status}}'=Synced applications.argoproj.io/{name} --timeout=240s
-kubectl wait -n argocd --for=jsonpath='{{.status.health.status}}'=Healthy applications.argoproj.io/{name} --timeout=240s
+if kubectl wait -n argocd --for=jsonpath='{{.status.sync.status}}'=Synced applications.argoproj.io/{name} --timeout=240s &&
+   kubectl wait -n argocd --for=jsonpath='{{.status.health.status}}'=Healthy applications.argoproj.io/{name} --timeout=240s; then
+  exit 0
+fi
+# Filter at source: only this exact safe code may leave credential Pod logs.
+kubectl logs -n {namespace} job/{job_name} --tail=20 2>/dev/null |
+  sed -n 's/^Gateway credential operation failed: ACCOUNTING_RESTORE_REQUIRED$/ACCOUNTING_RESTORE_REQUIRED/p'
+exit 1
 ''')
     # Separate JSON read avoids parsing mixed apply/wait output, and verifies the
     # full desired sources so stale Healthy status cannot admit a candidate.

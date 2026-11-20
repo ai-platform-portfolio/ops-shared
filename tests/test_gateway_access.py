@@ -96,6 +96,19 @@ class ApplyTests(unittest.TestCase):
              self.assertRaisesRegex(RuntimeError, 'Gateway command failed'):
             self.access.invoke('--command', 'kubectl get')
 
+    def test_only_exact_safe_accounting_code_is_exposed(self):
+        from unittest.mock import patch
+        for log, expected in [
+                ('apply complete\nACCOUNTING_RESTORE_REQUIRED\nprivate-api-response', 'ACCOUNTING_RESTORE_REQUIRED'),
+                ('private-api-response ACCOUNTING_RESTORE_REQUIRED', 'Gateway command failed'),
+                ('UNKNOWN_CODE\nprivate-api-response', 'Gateway command failed')]:
+            with self.subTest(log=log), \
+                 patch.dict(os.environ, {'RESOURCE_GROUP': 'example', 'CLUSTER': 'example'}), \
+                 patch.object(self.access, 'command', return_value=json.dumps({'exitCode': 1, 'logs': log})), \
+                 self.assertRaisesRegex(RuntimeError, expected) as error:
+                self.access.invoke('--command', 'kubectl wait')
+            self.assertNotIn('private-api-response', str(error.exception))
+
     def test_mismatched_release_stops_before_any_cluster_command(self):
         from unittest.mock import patch
         self.record.write_text(json.dumps({'agent': 'other-consumer'}))
@@ -113,14 +126,14 @@ class ApplyTests(unittest.TestCase):
     def test_stale_healthy_status_cannot_admit_candidate(self):
         from unittest.mock import patch
         self.actual['status']['sync']['comparedTo']['sources'] = ['previous-source']
-        with patch.object(self.access, 'render', return_value='registration'), \
+        with patch.object(self.access, 'render', return_value='kind: Job\nmetadata: {name: credential-job, namespace: litellm}'), \
              patch.object(self.access, 'invoke', side_effect=['', '', json.dumps(self.actual)]), \
              self.assertRaisesRegex(ValueError, 'current source'):
             self.access.apply()
 
     def test_matching_current_source_and_principal_complete_registration(self):
         from unittest.mock import patch
-        with patch.object(self.access, 'render', return_value='registration'), \
+        with patch.object(self.access, 'render', return_value='kind: Job\nmetadata: {name: credential-job, namespace: litellm}'), \
              patch.object(self.access, 'invoke', side_effect=['', '', json.dumps(self.actual)]) as invoke:
             self.access.apply()
         self.assertEqual(invoke.call_count, 3)
@@ -132,6 +145,9 @@ class ApplyTests(unittest.TestCase):
         self.assertIn('applications.argoproj.io/hosted-consumer', invoke.call_args_list[0].args[-1])
         self.assertIn('applications.argoproj.io/hosted-consumer', invoke.call_args_list[2].args[-1])
         self.assertIn('set -eu', remote_command)
+        self.assertIn('job/credential-job', remote_command)
+        self.assertIn('sed -n', remote_command)
+        self.assertIn('^Gateway credential operation failed: ACCOUNTING_RESTORE_REQUIRED$', remote_command)
         values = json.loads((self.access.directory() / 'values.json').read_text())
         self.assertEqual(values['platform']['modelGateway']['principalId'], self.principal)
         self.assertFalse(values['platform']['modelGateway']['connectionOnly'])
