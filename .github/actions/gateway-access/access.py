@@ -19,8 +19,11 @@ def invoke(*arguments):
                                 '--resource-group', os.environ['RESOURCE_GROUP'],
                                 '--name', os.environ['CLUSTER'], *arguments, '--output', 'json'))
     if result.get('exitCode') != 0:
-        if 'ACCOUNTING_RESTORE_REQUIRED' in (result.get('logs') or '').splitlines():
+        diagnostics = (result.get('logs') or '').splitlines()
+        if 'ACCOUNTING_RESTORE_REQUIRED' in diagnostics:
             raise RuntimeError('ACCOUNTING_RESTORE_REQUIRED: restore or explicitly reconcile existing accounting; no new allowance was issued')
+        if 'CREDENTIAL_APPLICATION_NOT_READY' in diagnostics:
+            raise RuntimeError('Credential Application did not become Synced and Healthy for its current sources')
         raise RuntimeError(f'Gateway command failed; Azure operation: {result.get("id", "unavailable")}')
     return (result['logs'] or '').strip()
 
@@ -80,6 +83,8 @@ def apply():
         raise ValueError('Release record must match source, agent and native principal')
     values = json.loads((directory() / 'values.json').read_text())
     name = values['name']
+    if not re.fullmatch(r'[a-z0-9]([-a-z0-9]*[a-z0-9])?', name):
+        raise ValueError('Invalid credential Application identity')
     values['platform']['modelGateway'].update(principalId=principal, connectionOnly=False)
     existing = invoke('--command', f'kubectl get applications.argoproj.io/{name} --namespace=argocd --ignore-not-found -o json')
     if existing:
@@ -96,24 +101,25 @@ def apply():
         raise ValueError('Invalid chart-owned credential Job identity')
     invoke('--file', str(registration), '--command', f'''
 set -eu
-kubectl apply -f registration.yaml
-kubectl wait -n argocd --for=jsonpath='{{.status.sync.comparedTo.sources[0].helm.valuesObject.platform.modelGateway.principalId}}'={principal} applications.argoproj.io/{name} --timeout=240s
-if kubectl wait -n argocd --for=jsonpath='{{.status.sync.status}}'=Synced applications.argoproj.io/{name} --timeout=240s &&
-   kubectl wait -n argocd --for=jsonpath='{{.status.health.status}}'=Healthy applications.argoproj.io/{name} --timeout=240s; then
-  exit 0
-fi
+expected=$(kubectl apply -f registration.yaml -o json | jq -ce '.spec.sources | select(length > 0)')
+# Use the API-normalized desired sources and check all conditions on one snapshot.
+deadline=$(($(date +%s) + 240))
+while [ "$(date +%s)" -lt "$deadline" ]; do
+  if kubectl get -n argocd applications.argoproj.io/{name} --request-timeout=5s -o json |
+    jq -e --argjson expected "$expected" '
+      .status.sync.status == "Synced" and .status.health.status == "Healthy"
+      and .spec.sources == $expected and .status.sync.comparedTo.sources == $expected
+    ' >/dev/null; then
+    exit 0
+  fi
+  sleep 3
+done
 # Filter at source: only this exact safe code may leave credential Pod logs.
 kubectl logs -n {namespace} job/{job_name} --tail=20 2>/dev/null |
   sed -n 's/^Gateway credential operation failed: ACCOUNTING_RESTORE_REQUIRED$/ACCOUNTING_RESTORE_REQUIRED/p'
+printf '%s\n' CREDENTIAL_APPLICATION_NOT_READY
 exit 1
 ''')
-    # Separate JSON read avoids parsing mixed apply/wait output, and verifies the
-    # full desired sources so stale Healthy status cannot admit a candidate.
-    actual = json.loads(invoke('--command', f'kubectl get applications.argoproj.io/{name} --namespace=argocd -o json'))
-    status = actual['status']
-    if (status['sync']['status'] != 'Synced' or status['health']['status'] != 'Healthy'
-            or status['sync']['comparedTo']['sources'] != actual['spec']['sources']):
-        raise ValueError('Credential Application has not reconciled its current source')
 
 
 def main():

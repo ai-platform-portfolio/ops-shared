@@ -123,31 +123,52 @@ class ApplyTests(unittest.TestCase):
             self.access.apply()
         self.assertEqual(invoke.call_count, 1)
 
-    def test_stale_healthy_status_cannot_admit_candidate(self):
+    def reconcile(self, snapshots, *, time_step):
         from unittest.mock import patch
-        self.actual['status']['sync']['comparedTo']['sources'] = ['previous-source']
+        root = Path(self.temp.name)
+        (root / 'snapshots').write_text(''.join(json.dumps(item) + '\n' for item in snapshots))
+        (root / 'reads').write_text('0\n')
         with patch.object(self.access, 'render', return_value='kind: Job\nmetadata: {name: credential-job, namespace: litellm}'), \
-             patch.object(self.access, 'invoke', side_effect=['', '', json.dumps(self.actual)]), \
-             self.assertRaisesRegex(ValueError, 'current source'):
+             patch.object(self.access, 'invoke', side_effect=['', '']) as invoke:
             self.access.apply()
+        self.assertEqual(invoke.call_count, 2)
+        remote_command = invoke.call_args_list[1].args[-1]
+        stubs = '''
+now=0
+date() { printf '%s\n' "$now"; }
+sleep() { now=$((now + TIME_STEP)); }
+kubectl() {
+  case "$1" in
+    apply) printf '%s\n' '{"spec":{"sources":["reviewed-source"]}}' ;;
+    get)
+      count=$(($(cat reads) + 1))
+      printf '%s\n' "$count" > reads
+      sed -n "${count}p" snapshots ;;
+    logs) printf '%s\n' 'private log message' 'Gateway credential operation failed: ACCOUNTING_RESTORE_REQUIRED' ;;
+  esac
+}
+'''
+        return subprocess.run(['sh', '-c', stubs + remote_command], cwd=root, capture_output=True,
+                              text=True, env={**os.environ, 'TIME_STEP': str(time_step)}), int((root / 'reads').read_text())
+
+    def test_stale_healthy_status_cannot_admit_candidate(self):
+        stale = json.loads(json.dumps(self.actual))
+        stale['status']['sync']['comparedTo']['sources'] = ['previous-source']
+        result, reads = self.reconcile([stale], time_step=240)
+        self.assertEqual(reads, 1)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout.splitlines(), ['ACCOUNTING_RESTORE_REQUIRED', 'CREDENTIAL_APPLICATION_NOT_READY'])
 
     def test_matching_current_source_and_principal_complete_registration(self):
-        from unittest.mock import patch
-        with patch.object(self.access, 'render', return_value='kind: Job\nmetadata: {name: credential-job, namespace: litellm}'), \
-             patch.object(self.access, 'invoke', side_effect=['', '', json.dumps(self.actual)]) as invoke:
-            self.access.apply()
-        self.assertEqual(invoke.call_count, 3)
-        remote_command = invoke.call_args_list[1].args[-1]
-        self.assertIn('kubectl apply -f registration.yaml', remote_command)
-        for call in invoke.call_args_list:
-            self.assertNotIn(' application/', call.args[-1])
-        self.assertIn('applications.argoproj.io/hosted-consumer', remote_command)
-        self.assertIn('applications.argoproj.io/hosted-consumer', invoke.call_args_list[0].args[-1])
-        self.assertIn('applications.argoproj.io/hosted-consumer', invoke.call_args_list[2].args[-1])
-        self.assertIn('set -eu', remote_command)
-        self.assertIn('job/credential-job', remote_command)
-        self.assertIn('sed -n', remote_command)
-        self.assertIn('^Gateway credential operation failed: ACCOUNTING_RESTORE_REQUIRED$', remote_command)
+        stale = json.loads(json.dumps(self.actual))
+        stale['status']['sync']['comparedTo']['sources'] = ['previous-source']
+        wrong_source = {'spec': {'sources': ['different-source']},
+                        'status': {'sync': {'status': 'Synced', 'comparedTo': {'sources': ['different-source']}},
+                                   'health': {'status': 'Healthy'}}}
+        result, reads = self.reconcile([stale, wrong_source, self.actual], time_step=3)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(reads, 3)
+        self.assertEqual(result.stdout, '')
         values = json.loads((self.access.directory() / 'values.json').read_text())
         self.assertEqual(values['platform']['modelGateway']['principalId'], self.principal)
         self.assertFalse(values['platform']['modelGateway']['connectionOnly'])
