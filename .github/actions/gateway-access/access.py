@@ -96,7 +96,10 @@ def github(method, path, body=None, *, missing=False):
 
 def release_facts(values, stage):
     record = json.loads(Path(os.environ['RELEASE_RECORD']).read_text())
-    agent = Path(os.environ['AGENT_DIRECTORY']).resolve().name
+    agent_directory = Path(os.environ['AGENT_DIRECTORY']).resolve()
+    agent = agent_directory.name
+    if agent_directory != Path(os.environ['GITHUB_WORKSPACE']).resolve() / 'agents' / agent:
+        raise ValueError('Hosted agent must be under agents/ in the source checkout')
     repository = os.environ['GITHUB_REPOSITORY']
     service = f'{repository.rsplit("/", 1)[1].lower()}-{agent}'
     principal = record.get('instance_principal_id', '').lower()
@@ -107,14 +110,11 @@ def release_facts(values, stage):
             or not re.fullmatch(r'[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}', principal)):
         raise ValueError('Release record must match source, agent, version and native principal')
 
-    intent_path = Path(os.environ['GITHUB_WORKSPACE']) / 'deploy/hosted.yaml'
-    intent = yaml.safe_load(intent_path.read_text())['hostedAgents'][agent]
-    if intent['config'] != f'agents/{agent}/config/agent.yaml':
-        raise ValueError('Hosted intent must reference the agent configuration in the pinned release')
+    intent = yaml.safe_load((agent_directory / 'config/agent.yaml').read_text())
     target = {k: values['platform']['telemetry'][k] for k in ('namespace', 'workload')} if values['platform'].get('telemetry') else {}
     if any(not re.fullmatch(r'[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?', label) for label in target.values()):
         raise ValueError('Hosted telemetry target must contain DNS labels')
-    alerts = intent.get('alerts', {}).get('readiness', False)
+    alerts = intent.get('readinessAlerts', False)
     if type(alerts) is not bool or (alerts and not target):
         raise ValueError('Hosted readiness alerts require a scoped telemetry target')
     if stage == 'serving':

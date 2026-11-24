@@ -81,8 +81,9 @@ class PublicationTests(unittest.TestCase):
         self.record.write_text(json.dumps(self.release))
         routing = root / 'routing.json'
         routing.write_text(json.dumps({'smoke': {'deployment': self.release}}))
-        (root/'deploy').mkdir()
-        (root/'deploy/hosted.yaml').write_text('hostedAgents: {agent: {config: agents/agent/config/agent.yaml, alerts: {readiness: true}}}')
+        config = root / 'agents/agent/config'
+        config.mkdir(parents=True)
+        (config / 'agent.yaml').write_text('readinessAlerts: true\n')
         environment = patch.dict(os.environ, {'RUNNER_TEMP': str(root), 'SERVICE': 'repo-agent',
                                               'GITHUB_REPOSITORY': 'org/repo', 'GITHUB_WORKSPACE': str(root),
                                               'AGENT_DIRECTORY': str(root/'agents/agent'),
