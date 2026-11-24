@@ -1,9 +1,9 @@
 name: Hosted gateway access
-description: Configure one hosted consumer and register chart-owned credentials using its native principal.
+description: Configure one hosted consumer and publish release facts for Argo to reconcile.
 
 inputs:
   operation:
-    description: configure before native deployment, or apply after its principal readback.
+    description: Configure before deployment, publish candidate credentials, or publish verified serving readiness.
     required: true
 
   service:
@@ -31,13 +31,21 @@ inputs:
     required: true
 
   release-record:
-    description: Verified native Foundry release record; required for apply.
+    description: Verified native Foundry release record; required for candidate and serving publication.
+    default: ''
+
+  routing-record:
+    description: Stable smoke receipt required for serving publication.
     default: ''
 
 outputs:
   connection:
     description: Local public connection metadata path; contains no credential values.
     value: ${{ steps.access.outputs.connection }}
+
+  traces-endpoint:
+    description: Private trace collector declared by the platform.
+    value: ${{ steps.access.outputs.traces-endpoint }}
 
 runs:
   using: composite
@@ -66,4 +74,5 @@ runs:
         RESOURCE_GROUP: ${{ inputs.resource-group }}
         CLUSTER: ${{ inputs.cluster }}
         RELEASE_RECORD: ${{ inputs.release-record }}
+        ROUTING_RECORD: ${{ inputs.routing-record }}
       run: python3 "${{ github.action_path }}/access.py"
