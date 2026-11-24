@@ -1,4 +1,5 @@
 """Execute the scalar action's admission boundary with two small native CLI stubs."""
+import base64
 import json
 import os
 from pathlib import Path
@@ -24,7 +25,7 @@ class GatewayAccessTests(unittest.TestCase):
             (root / 'config').mkdir()
             (root / 'config/agent.yaml').write_text('gatewayAccess: {policy: bounded-agent}\n')
             defaults = {'modelGateway': {'policies': {'bounded-agent': {'maxBudget': budget, 'rpm': 1, 'tpm': 1000, 'parallel': 1}}}}
-            log = json.dumps({'data': {'values.json': json.dumps(defaults)}})
+            log = json.dumps({'data': {'values.json': json.dumps(defaults), 'hosted-generation': '1'*24, 'traces-endpoint': 'https://otel.example.test/v1/traces'}})
             (root / 'response.json').write_text(json.dumps({'exitCode': exit_code, 'logs': log}))
             (root / 'render.yaml').write_text('kind: ConfigMap\ndata:\n  connection.json: \'{"MODEL_CONNECTION_MODE":"gateway","MODEL_API_KEY_SECRET_URI":"https://test.vault.azure.net/secrets/scoped"}\'\n')
             for name, source in {'az': 'cat "$AZ_RESPONSE"', 'helm': 'cat "$HELM_RESPONSE"'}.items():
@@ -38,6 +39,9 @@ class GatewayAccessTests(unittest.TestCase):
                    'GITHUB_ENV': str(root / 'env'), 'GITHUB_OUTPUT': str(root / 'output'),
                    'AZ_RESPONSE': str(root / 'response.json'), 'HELM_RESPONSE': str(root / 'render.yaml')}
             result = subprocess.run([os.environ.get('PYTHON', 'python3'), str(SCRIPT)], env=env, capture_output=True, text=True)
+            published = root / 'output'
+            self.assertEqual('traces-endpoint=https://otel.example.test/v1/traces' in
+                             (published.read_text() if published.exists() else ''), result.returncode == 0)
             return result, (root / 'env').read_text() if (root / 'env').exists() else ''
 
     def test_unset_ceilings_block_before_connection_or_credentials(self):
@@ -59,7 +63,7 @@ class GatewayAccessTests(unittest.TestCase):
         self.assertEqual(exported, '')
 
 
-class ApplyTests(unittest.TestCase):
+class PublicationTests(unittest.TestCase):
     def setUp(self):
         import importlib.util
         from unittest.mock import patch
@@ -70,15 +74,34 @@ class ApplyTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         root = Path(self.temp.name)
         self.principal = '00000000-0000-0000-0000-000000000003'
+        self.name = 'hosted-' + 'b'*24
         self.record = root / 'release.json'
-        self.record.write_text(json.dumps({'agent': 'consumer', 'source_revision': 'a'*40, 'instance_principal_id': self.principal}))
-        environment = patch.dict(os.environ, {'RUNNER_TEMP': str(root), 'SERVICE': 'consumer',
-                                              'GITHUB_SHA': 'a'*40, 'RELEASE_RECORD': str(self.record)})
+        self.release = {'agent': 'repo-agent', 'source_revision': 'a'*40, 'version': '1',
+                        'instance_principal_id': self.principal, 'image': 'registry/image@sha256:'+'1'*64}
+        self.record.write_text(json.dumps(self.release))
+        routing = root / 'routing.json'
+        routing.write_text(json.dumps({'smoke': {'deployment': self.release}}))
+        (root/'deploy').mkdir()
+        (root/'deploy/hosted.yaml').write_text('hostedAgents: {agent: {config: agents/agent/config/agent.yaml, alerts: {readiness: true}}}')
+        environment = patch.dict(os.environ, {'RUNNER_TEMP': str(root), 'SERVICE': 'repo-agent',
+                                              'GITHUB_REPOSITORY': 'org/repo', 'GITHUB_WORKSPACE': str(root),
+                                              'AGENT_DIRECTORY': str(root/'agents/agent'),
+                                              'GITHUB_SHA': 'a'*40, 'RELEASE_RECORD': str(self.record),
+                                              'ROUTING_RECORD': str(routing)})
         environment.start()
         self.addCleanup(environment.stop)
         self.access.directory().mkdir()
-        (self.access.directory() / 'values.json').write_text(json.dumps({'name': 'hosted-consumer', 'platform': {'modelGateway': {}}}))
-        self.actual = {'spec': {'sources': ['reviewed-source']}, 'status': {'sync': {
+        (self.access.directory() / 'generation').write_text('1'*24)
+        values = {'name': self.name, 'platform': {'modelGateway': {},
+                  'telemetry': {'namespace': 'preview-one', 'workload': 'api'}}}
+        (self.access.directory() / 'values.json').write_text(json.dumps(values))
+        self.actual = {'metadata': {
+            'ownerReferences': [{'kind': 'ApplicationSet', 'name': 'application-hosted', 'controller': True}],
+            'annotations': {'platform.ai-platform-portfolio/hosted-principal': self.principal,
+                            'platform.ai-platform-portfolio/hosted-source': 'a'*40,
+                            'platform.ai-platform-portfolio/hosted-version': '1',
+                            'platform.ai-platform-portfolio/hosted-alerts': 'false'}},
+            'spec': {'sources': ['reviewed-source']}, 'status': {'sync': {
             'status': 'Synced', 'comparedTo': {'sources': ['reviewed-source']}}, 'health': {'status': 'Healthy'}}}
 
     def test_successful_command_output_can_be_null_empty_or_text(self):
@@ -111,16 +134,16 @@ class ApplyTests(unittest.TestCase):
 
     def test_mismatched_release_stops_before_any_cluster_command(self):
         from unittest.mock import patch
-        self.record.write_text(json.dumps({'agent': 'other-consumer'}))
+        self.record.write_text(json.dumps({**self.release, 'agent': 'other-consumer'}))
         with patch.object(self.access, 'invoke') as invoke, self.assertRaises(ValueError):
-            self.access.apply()
+            self.access.publish('candidate')
         invoke.assert_not_called()
 
     def test_principal_replacement_stops_before_registration(self):
         from unittest.mock import patch
-        previous = {'spec': {'sources': [{'helm': {'valuesObject': {'platform': {'modelGateway': {'principalId': 'another-principal'}}}}}]}}
+        previous = {'metadata': {}, 'spec': {'sources': [{'helm': {'valuesObject': {'platform': {'modelGateway': {'principalId': 'another-principal'}}}}}]}}
         with patch.object(self.access, 'invoke', return_value=json.dumps(previous)) as invoke, self.assertRaisesRegex(ValueError, 'principal changed'):
-            self.access.apply()
+            self.access.publish('candidate')
         self.assertEqual(invoke.call_count, 1)
 
     def reconcile(self, snapshots, *, time_step):
@@ -129,8 +152,9 @@ class ApplyTests(unittest.TestCase):
         (root / 'snapshots').write_text(''.join(json.dumps(item) + '\n' for item in snapshots))
         (root / 'reads').write_text('0\n')
         with patch.object(self.access, 'render', return_value='kind: Job\nmetadata: {name: credential-job, namespace: litellm}'), \
+             patch.object(self.access, 'publish_to_git', side_effect=lambda generation, facts: facts), \
              patch.object(self.access, 'invoke', side_effect=['', '']) as invoke:
-            self.access.apply()
+            self.access.publish('candidate')
         self.assertEqual(invoke.call_count, 2)
         remote_command = invoke.call_args_list[1].args[-1]
         stubs = '''
@@ -139,7 +163,7 @@ date() { printf '%s\n' "$now"; }
 sleep() { now=$((now + TIME_STEP)); }
 kubectl() {
   case "$1" in
-    apply) printf '%s\n' '{"spec":{"sources":["reviewed-source"]}}' ;;
+    apply|patch|create) exit 90 ;;
     get)
       count=$(($(cat reads) + 1))
       printf '%s\n' "$count" > reads
@@ -159,7 +183,7 @@ kubectl() {
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(result.stdout.splitlines(), ['ACCOUNTING_RESTORE_REQUIRED', 'CREDENTIAL_APPLICATION_NOT_READY'])
 
-    def test_matching_current_source_and_principal_complete_registration(self):
+    def test_matching_argo_owner_current_source_and_principal_admit_candidate(self):
         stale = json.loads(json.dumps(self.actual))
         stale['status']['sync']['comparedTo']['sources'] = ['previous-source']
         wrong_source = {'spec': {'sources': ['different-source']},
@@ -172,3 +196,34 @@ kubectl() {
         values = json.loads((self.access.directory() / 'values.json').read_text())
         self.assertEqual(values['platform']['modelGateway']['principalId'], self.principal)
         self.assertFalse(values['platform']['modelGateway']['connectionOnly'])
+
+    def test_publication_is_generation_scoped_and_contains_only_release_facts(self):
+        from unittest.mock import patch
+        values = json.loads((self.access.directory() / 'values.json').read_text())
+        facts = self.access.release_facts(values, 'candidate')
+        self.assertFalse(facts['alerts'])
+        self.assertTrue(self.access.release_facts(values, 'serving')['alerts'])
+        with patch.object(self.access, 'github', side_effect=[{'ref': 'refs/heads/delivery'}, None, {}]) as github:
+            self.access.publish_to_git('1'*24, facts)
+        method, path, payload = github.call_args.args
+        self.assertEqual(method, 'PUT')
+        self.assertEqual(path, 'repos/org/repo/contents/deploy/hosted/'+'1'*24+'/agent.json')
+        self.assertEqual(payload['branch'], 'delivery')
+        self.assertEqual(json.loads(base64.b64decode(payload['content'])), facts)
+        self.assertEqual(set(facts), {'agent', 'sourceRevision', 'principalId', 'version', 'alerts', 'telemetry'})
+
+    def test_candidate_retry_preserves_an_identical_verified_serving_publication(self):
+        from unittest.mock import patch
+        values = json.loads((self.access.directory() / 'values.json').read_text())
+        candidate = self.access.release_facts(values, 'candidate')
+        serving = self.access.release_facts(values, 'serving')
+        content = base64.b64encode(json.dumps(serving).encode()).decode()
+        with patch.object(self.access, 'github', side_effect=[{'ref': 'delivery'}, {'content': content}]) as github:
+            self.assertEqual(self.access.publish_to_git('1'*24, candidate), serving)
+        self.assertEqual(github.call_count, 2)
+
+    def test_serving_publication_rejects_a_different_smoke_version(self):
+        Path(os.environ['ROUTING_RECORD']).write_text(json.dumps({'smoke': {'deployment': {**self.release, 'version': '2'}}}))
+        values = json.loads((self.access.directory() / 'values.json').read_text())
+        with self.assertRaisesRegex(ValueError, 'Stable smoke must match'):
+            self.access.release_facts(values, 'serving')
