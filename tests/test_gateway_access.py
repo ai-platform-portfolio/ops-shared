@@ -1,5 +1,4 @@
 """Execute the scalar action's admission boundary with two small native CLI stubs."""
-import base64
 import json
 import os
 from pathlib import Path
@@ -198,30 +197,77 @@ kubectl() {
         self.assertEqual(values['platform']['modelGateway']['principalId'], self.principal)
         self.assertFalse(values['platform']['modelGateway']['connectionOnly'])
 
-    def test_publication_is_generation_scoped_and_contains_only_release_facts(self):
+    def git_repository(self):
         from unittest.mock import patch
+        root = Path(self.temp.name)
+        remote = root / 'remote.git'
+        subprocess.run(['git', 'init', '--bare', '-q', str(remote)], check=True)
+        local = root / 'source'
+        subprocess.run(['git', 'init', '-q', str(local)], check=True)
+
+        def git(*args):
+            return subprocess.check_output(['git', '-C', str(local), *args], text=True).strip()
+
+        git('config', 'user.name', 'Test')
+        git('config', 'user.email', 'test@example.test')
+        git('commit', '-qm', 'fixture', '--allow-empty')
+        git('remote', 'add', 'origin', remote.as_uri())
+        git('push', '-q', 'origin', 'HEAD:refs/heads/main')
+        settings = patch.dict(os.environ, {
+            'GIT_CONFIG_COUNT': '1',
+            'GIT_CONFIG_KEY_0': f'url.{remote.as_uri()}.insteadOf',
+            'GIT_CONFIG_VALUE_0': 'https://github.com/org/repo.git',
+        })
+        settings.start()
+        self.addCleanup(settings.stop)
+        return git
+
+    def test_publication_is_generation_scoped_and_contains_only_release_facts(self):
+        git = self.git_repository()
         values = json.loads((self.access.directory() / 'values.json').read_text())
         facts = self.access.release_facts(values, 'candidate')
         self.assertFalse(facts['alerts'])
         self.assertTrue(self.access.release_facts(values, 'serving')['alerts'])
-        with patch.object(self.access, 'github', side_effect=[{'ref': 'refs/heads/delivery'}, None, {}]) as github:
-            self.access.publish_to_git('1'*24, facts)
-        method, path, payload = github.call_args.args
-        self.assertEqual(method, 'PUT')
-        self.assertEqual(path, 'repos/org/repo/contents/deploy/hosted/'+'1'*24+'/agent.json')
-        self.assertEqual(payload['branch'], 'delivery')
-        self.assertEqual(json.loads(base64.b64decode(payload['content'])), facts)
+        facts['sourceRevision'] = git('rev-parse', 'HEAD')
+        self.assertEqual(self.access.publish_to_git('1'*24, facts), facts)
+        git('fetch', '-q', 'origin', 'delivery')
+        path = 'deploy/hosted/'+'1'*24+'/agent.json'
+        self.assertEqual(git('diff', '--name-only', 'HEAD', 'FETCH_HEAD'), path)
+        self.assertEqual(json.loads(git('show', f'FETCH_HEAD:{path}')), facts)
         self.assertEqual(set(facts), {'agent', 'sourceRevision', 'principalId', 'version', 'alerts', 'telemetry'})
 
     def test_candidate_retry_preserves_an_identical_verified_serving_publication(self):
-        from unittest.mock import patch
+        git = self.git_repository()
         values = json.loads((self.access.directory() / 'values.json').read_text())
-        candidate = self.access.release_facts(values, 'candidate')
-        serving = self.access.release_facts(values, 'serving')
-        content = base64.b64encode(json.dumps(serving).encode()).decode()
-        with patch.object(self.access, 'github', side_effect=[{'ref': 'delivery'}, {'content': content}]) as github:
-            self.assertEqual(self.access.publish_to_git('1'*24, candidate), serving)
-        self.assertEqual(github.call_count, 2)
+        candidate = dict(self.access.release_facts(values, 'candidate'), sourceRevision=git('rev-parse', 'HEAD'))
+        serving = dict(candidate, alerts=True)
+        self.access.publish_to_git('1'*24, candidate)
+        self.access.publish_to_git('1'*24, serving)
+        first_tip = git('ls-remote', 'origin', 'refs/heads/delivery')
+        self.assertEqual(self.access.publish_to_git('1'*24, candidate), serving)
+        self.assertEqual(git('ls-remote', 'origin', 'refs/heads/delivery'), first_tip)
+
+    def test_concurrent_publishers_preserve_both_records(self):
+        from unittest.mock import patch
+        git = self.git_repository()
+        values = json.loads((self.access.directory() / 'values.json').read_text())
+        facts = dict(self.access.release_facts(values, 'candidate'), sourceRevision=git('rev-parse', 'HEAD'))
+        run = subprocess.run
+        first_push = True
+
+        def concurrent_push(args, **kwargs):
+            nonlocal first_push
+            if args[3] == 'push' and first_push:
+                first_push = False
+                self.access.publish_to_git('1'*24, dict(facts, agent='another'))
+            return run(args, **kwargs)
+
+        with patch.object(subprocess, 'run', side_effect=concurrent_push), patch.object(self.access.time, 'sleep'):
+            self.access.publish_to_git('1'*24, facts)
+        git('fetch', '-q', 'origin', 'delivery')
+        self.assertEqual(git('ls-tree', '-r', '--name-only', 'FETCH_HEAD').splitlines(), [
+            'deploy/hosted/'+'1'*24+'/agent.json', 'deploy/hosted/'+'1'*24+'/another.json',
+        ])
 
     def test_serving_publication_rejects_a_different_smoke_version(self):
         Path(os.environ['ROUTING_RECORD']).write_text(json.dumps({'smoke': {'deployment': {**self.release, 'version': '2'}}}))
