@@ -1,13 +1,12 @@
 """Connect one native hosted consumer to chart-owned gateway credentials."""
-import base64
 import hashlib
 import json
 import os
 from pathlib import Path
 import re
 import subprocess
+import tempfile
 import time
-from urllib.parse import urlencode
 
 import yaml
 
@@ -80,20 +79,6 @@ def configure():
         output.write(f'connection={path}\ntraces-endpoint={traces}\n')
 
 
-def github(method, path, body=None, *, missing=False):
-    arguments = ['gh', 'api', '--include', '--method', method, path]
-    if body is not None:
-        arguments += ['--input', '-']
-    result = subprocess.run(arguments, input=json.dumps(body) if body is not None else None,
-                            capture_output=True, text=True, timeout=30)
-    headers, _, response = result.stdout.partition('\n\n')
-    if missing and re.match(r'^HTTP/\S+ 404\b', headers):
-        return None
-    if result.returncode or not re.match(r'^HTTP/\S+ 2[0-9]{2}\b', headers):
-        raise RuntimeError(f'Hosted release Git publication failed during {method}')
-    return json.loads(response)
-
-
 def release_facts(values, stage):
     record = json.loads(Path(os.environ['RELEASE_RECORD']).read_text())
     agent_directory = Path(os.environ['AGENT_DIRECTORY']).resolve()
@@ -126,39 +111,48 @@ def release_facts(values, stage):
 
 
 def publish_to_git(generation, facts):
-    repository = f'repos/{os.environ["GITHUB_REPOSITORY"]}'
-    branch = f'{repository}/git/ref/heads/delivery'
-    if github('GET', branch, missing=True) is None:
-        try:
-            github('POST', f'{repository}/git/refs', {'ref': 'refs/heads/delivery', 'sha': facts['sourceRevision']})
-        except RuntimeError:
-            # Another hosted service in this repository may have created it.
-            if github('GET', branch, missing=True) is None:
-                raise
+    repository = os.environ['GITHUB_REPOSITORY']
+    branch = 'refs/heads/delivery'
+    with tempfile.TemporaryDirectory(dir=directory()) as checkout:
+        env = {**os.environ, 'GIT_TERMINAL_PROMPT': '0'}
 
-    path = f'{repository}/contents/deploy/hosted/{generation}/{facts["agent"]}.json'
-    query = urlencode({'ref': 'delivery'})
-    for attempt in range(3):
-        entry = github('GET', f'{path}?{query}', missing=True)
-        if entry:
-            current = json.loads(base64.b64decode(entry['content']))
-            if current['principalId'] != facts['principalId']:
-                raise ValueError('Native principal changed; review old-reader cleanup before replacement')
-            if int(current['version']) > int(facts['version']):
-                raise ValueError('Hosted delivery must not replace a newer version')
-            if current == facts or (current['alerts'] and current == dict(facts, alerts=True)):
-                return current
-        payload = {'message': f'Publish hosted release for {facts["agent"]}', 'branch': 'delivery',
-                   'content': base64.b64encode(json.dumps(facts, sort_keys=True).encode()).decode()}
-        if entry:
-            payload['sha'] = entry['sha']
-        try:
-            github('PUT', path, payload)
-            return facts
-        except RuntimeError:
-            if attempt == 2:
-                raise
-            time.sleep(attempt + 1)
+        def git(*args):
+            return subprocess.run(['git', '-C', checkout, *args], check=True, capture_output=True,
+                                  text=True, env=env, timeout=60).stdout
+
+        git('init', '--quiet')
+        git('remote', 'add', 'origin', f'https://github.com/{repository}.git')
+        git('config', '--add', 'credential.helper', '')
+        git('config', '--add', 'credential.helper', '!gh auth git-credential')
+        git('config', 'user.name', 'github-actions[bot]')
+        git('config', 'user.email', '41898282+github-actions[bot]@users.noreply.github.com')
+
+        path = Path(f'deploy/hosted/{generation}/{facts["agent"]}.json')
+        record = Path(checkout) / path
+        for attempt in range(3):
+            source = branch if git('ls-remote', '--heads', 'origin', branch) else facts['sourceRevision']
+            git('fetch', '--quiet', '--depth=1', 'origin', source)
+            git('checkout', '--quiet', '--detach', 'FETCH_HEAD')
+            if record.exists():
+                current = json.loads(record.read_text())
+                if current['principalId'] != facts['principalId']:
+                    raise ValueError('Native principal changed; review old-reader cleanup before replacement')
+                if int(current['version']) > int(facts['version']):
+                    raise ValueError('Hosted delivery must not replace a newer version')
+                if current == facts or (current['alerts'] and current == dict(facts, alerts=True)):
+                    return current
+
+            record.parent.mkdir(parents=True, exist_ok=True)
+            record.write_text(json.dumps(facts, sort_keys=True) + '\n')
+            git('add', '--', str(path))
+            git('commit', '--quiet', '--no-gpg-sign', '-m', f'Publish hosted release for {facts["agent"]}')
+            try:
+                git('push', '--quiet', 'origin', f'HEAD:{branch}')
+                return facts
+            except subprocess.CalledProcessError:
+                if attempt == 2:
+                    raise RuntimeError('Could not push the hosted release to delivery') from None
+                time.sleep(attempt + 1)
 
 
 def publish(stage):
